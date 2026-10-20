@@ -1,0 +1,15 @@
+apiVersion: v2
+name: cagip-aigw-platform
+description: >-
+  CAGIP AI Gateway platform: Kong Operator, KongLicense, the AI Gateway (OnPremAIGateway +
+  AIGatewayDataPlane), global and mandatory policies, the central auth strategy, the entity's
+  RBAC and the ValidatingAdmissionPolicies that govern the entity's AI configuration.
+type: application
+version: 0.1.0
+appVersion: "2.2.0"   # Kong AI Gateway
+# Subchart charts/kong-operator-1.5.0-rapid.2.0.tgz: Kong Operator chart packaged from
+# Kong/kong-operator@f4a00ed, the commit of the nightly image kong/nightly-kong-operator:20261020.
+# Vendored, not declared as a dependency: the published 1.5.0-rapid.2.0 chart carries older AI
+# CRDs. Once a release ships these CRDs, declare it here instead:
+#   dependencies:
+#     - { name: kong-operator, version: <x.y.z>, repository: https://charts.konghq.com }

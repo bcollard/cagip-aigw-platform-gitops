@@ -1,0 +1,33 @@
+# LCL's cluster (marina fleet lclv2, context lclv2-aigw). Values on top of chart/values.yaml.
+entity:
+  name: lcl
+  displayName: LCL
+
+gateway:
+  hostname: ai-lcl.lclv2.demo.internal
+  replicas: 2
+  tlsSecretName: marina-fleet-wildcard-tls        # marina fleet wildcard, created out of band
+  trustedCAConfigMap: marina-root-ca        # lab: mock-vertex (the "PSC" endpoint) uses the marina CA
+  service:
+    annotations:
+      external-dns.kubernetes.io/hostname: ai-lcl.lclv2.demo.internal
+  podLabels:
+    lcl.demo/role: aigw-dataplane           # scraped by the lab metrics agent
+
+auth:
+  displayName: CAGIP ADFS (Keycloak in the lab)
+  issuer: https://keycloak.kong.runlocal.dev/realms/lcl-aigw
+
+observability:
+  otel: { enabled: true, endpoint: "http://otel.lclv2.demo.internal:4318" }
+  httpLog: { enabled: true, endpoint: "http://es.lclv2.demo.internal:9200/kong-ai/_doc" }
+
+governance:
+  providerTypes: [gemini, openai]
+  llmHosts:
+    - mock-vertex.lclv2.demo.internal                                   # Vertex AI through PSC (mock)
+    - ollama.aigw-backends.svc.cluster.local               # on-prem model
+  mcpHosts:
+    - agences-api.aigw-backends.svc.cluster.local
+  tokenCapPerHour: 200000
+  payloadLogging: false

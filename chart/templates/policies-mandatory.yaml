@@ -1,0 +1,41 @@
+# Mandatory policies. Not global: a global ai-prompt-guard breaks MCP traffic, and the token must
+# still reach MCP tools. Every entity Model attaches both (aigw-models).
+{{- with .Values.mandatoryPolicies }}
+---
+# The user's ADFS token and identity headers never reach the LLM provider.
+apiVersion: aiconfiguration.konghq.com/v1alpha1
+kind: AIGatewayPolicy
+metadata:
+  name: {{ .stripIdentity.name }}
+  {{- include "cagip.meta" $ | nindent 2 }}
+spec:
+  {{ include "cagip.gatewayRef" $ }}
+  apiSpec:
+    name: {{ .stripIdentity.name }}
+    displayName: CAGIP · strip identity before the provider
+    type: request-transformer
+    global: Disabled
+    config:
+      type: inline
+      value:
+        remove: { headers: {{ toJson .stripIdentity.headers }} }
+---
+apiVersion: aiconfiguration.konghq.com/v1alpha1
+kind: AIGatewayPolicy
+metadata:
+  name: {{ .baselineGuard.name }}
+  {{- include "cagip.meta" $ | nindent 2 }}
+spec:
+  {{ include "cagip.gatewayRef" $ }}
+  apiSpec:
+    name: {{ .baselineGuard.name }}
+    displayName: CAGIP · baseline prompt guard
+    type: ai-prompt-guard
+    global: Disabled
+    config:
+      type: inline
+      value:
+        match_all_roles: true
+        allow_all_conversation_history: false
+        deny_patterns: {{ toJson .baselineGuard.denyPatterns }}
+{{- end }}

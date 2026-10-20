@@ -1,0 +1,11 @@
+{{- if .Values.license.raw }}
+# The Kong licence. Its value is a deploy-time parameter of the Argo CD Application, never in Git.
+apiVersion: configuration.konghq.com/v1alpha1
+kind: KongLicense
+metadata:
+  name: kong-license
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+rawLicenseString: {{ .Values.license.raw | quote }}
+{{- end }}

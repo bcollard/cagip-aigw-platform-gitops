@@ -1,0 +1,30 @@
+# What the entity's Argo CD Application (ServiceAccount {{ .Values.governance.entityServiceAccount.namespace }}/{{ .Values.governance.entityServiceAccount.name }})
+# may write, in the gateway namespace only: AI providers, Models, AI policies, consumer groups,
+# MCP servers. Read-only on the rest of the AI configuration. Nothing else: no Secrets (created
+# out of band), no gateway, DataPlane, auth strategy, certificate, custom (Lua) policy, consumer
+# or credential (an api-key consumer would bypass ADFS). The VAPs check the content.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: entity-ai-config
+  namespace: {{ .Values.gateway.namespace }}
+  labels: { app.kubernetes.io/part-of: cagip-aigw-platform }
+rules:
+  - apiGroups: [aiconfiguration.konghq.com]
+    resources: [aigatewaymodelproviders, aigatewaymodels, aigatewaypolicies, aigatewayconsumergroups, aigatewaymcpservers]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [aigateway.konghq.com, aiconfiguration.konghq.com]
+    resources: ["*"]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: entity-ai-config
+  namespace: {{ .Values.gateway.namespace }}
+  labels: { app.kubernetes.io/part-of: cagip-aigw-platform }
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.governance.entityServiceAccount.name }}
+    namespace: {{ .Values.governance.entityServiceAccount.namespace }}
+roleRef: { kind: Role, name: entity-ai-config, apiGroup: rbac.authorization.k8s.io }

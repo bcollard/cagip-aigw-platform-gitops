@@ -1,0 +1,127 @@
+# Global policies: one top-level plugin each, on every route of the gateway. Their types are not
+# in governance.policyTypes, so the entity cannot shadow them on a Model.
+{{- with .Values.observability }}
+{{- if .prometheus.enabled }}
+---
+apiVersion: aiconfiguration.konghq.com/v1alpha1
+kind: AIGatewayPolicy
+metadata:
+  name: cagip-prometheus
+  {{- include "cagip.meta" $ | nindent 2 }}
+spec:
+  {{ include "cagip.gatewayRef" $ }}
+  apiSpec:
+    name: cagip-prometheus
+    displayName: CAGIP · Prometheus
+    type: prometheus
+    global: Enabled
+    config:
+      type: inline
+      value:
+        ai_metrics: true
+        per_consumer: false            # per-user analytics come from logs
+        status_code_metrics: true
+        latency_metrics: true
+        bandwidth_metrics: true
+        upstream_health_metrics: true
+{{- end }}
+{{- if .otel.enabled }}
+---
+apiVersion: aiconfiguration.konghq.com/v1alpha1
+kind: AIGatewayPolicy
+metadata:
+  name: cagip-otel
+  {{- include "cagip.meta" $ | nindent 2 }}
+spec:
+  {{ include "cagip.gatewayRef" $ }}
+  apiSpec:
+    name: cagip-otel
+    displayName: CAGIP · OpenTelemetry
+    type: opentelemetry
+    global: Enabled
+    config:
+      type: inline
+      value:
+        traces_endpoint: {{ .otel.endpoint }}/v1/traces
+        access_logs:
+          endpoint: {{ .otel.endpoint }}/v1/logs
+          custom_attributes_by_lua:
+            aigw.team: "return kong.ctx.shared.aigw_team"
+        resource_attributes:
+          service.name: {{ $.Values.gateway.name }}-{{ $.Values.entity.name }}
+{{- end }}
+{{- if .httpLog.enabled }}
+---
+apiVersion: aiconfiguration.konghq.com/v1alpha1
+kind: AIGatewayPolicy
+metadata:
+  name: cagip-http-log
+  {{- include "cagip.meta" $ | nindent 2 }}
+spec:
+  {{ include "cagip.gatewayRef" $ }}
+  apiSpec:
+    name: cagip-http-log
+    displayName: CAGIP · HTTP request log
+    type: http-log
+    global: Enabled
+    config:
+      type: inline
+      value:
+        http_endpoint: {{ .httpLog.endpoint }}
+        content_type: application/json
+        queue: { max_batch_size: 1 }
+        custom_fields_by_lua:
+          aigw_entity: "return '{{ $.Values.entity.name }}'"
+          aigw_team: "return kong.ctx.shared.aigw_team"
+          aigw_app: "return kong.ctx.shared.aigw_app"
+          aigw_user: "return kong.ctx.shared.aigw_user"
+          request.headers.authorization: "return nil"
+{{- end }}
+{{- if .correlationId.enabled }}
+---
+apiVersion: aiconfiguration.konghq.com/v1alpha1
+kind: AIGatewayPolicy
+metadata:
+  name: cagip-correlation-id
+  {{- include "cagip.meta" $ | nindent 2 }}
+spec:
+  {{ include "cagip.gatewayRef" $ }}
+  apiSpec:
+    name: cagip-correlation-id
+    displayName: CAGIP · correlation ID
+    type: correlation-id
+    global: Enabled
+    config:
+      type: inline
+      value: { header_name: {{ .correlationId.header }}, generator: uuid, echo_downstream: true }
+{{- end }}
+{{- if .logTags.enabled }}
+---
+# ADFS claims → request context, read by cagip-http-log and cagip-otel. A post-function: its
+# access phase runs after the auth strategy.
+apiVersion: aiconfiguration.konghq.com/v1alpha1
+kind: AIGatewayPolicy
+metadata:
+  name: cagip-log-tags
+  {{- include "cagip.meta" $ | nindent 2 }}
+spec:
+  {{ include "cagip.gatewayRef" $ }}
+  apiSpec:
+    name: cagip-log-tags
+    displayName: CAGIP · claims to log fields
+    type: post-function
+    global: Enabled
+    config:
+      type: inline
+      value:
+        access:
+          - |
+            local p = kong.client.get_jwt_token_payload()
+            if not p then return end
+            local g = p.groups
+            if type(g) == "table" then g = g[1] end
+            kong.ctx.shared.aigw_team = g or "unknown"
+            kong.ctx.shared.aigw_app = p.azp
+            kong.ctx.shared.aigw_user = p.preferred_username or p.upn
+{{- end }}
+{{- end }}

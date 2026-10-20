@@ -1,0 +1,118 @@
+# CAGIP AI Gateway platform chart: CAGIP defaults. One release per entity cluster, synced by the
+# Argo CD Application cagip-aigw-platform as argocd/platform-deployer. Per-cluster values live
+# in ../clusters/<entity>.yaml, in this repo: governance limits stay with CAGIP.
+
+entity:
+  name: ""                 # lcl, caas, …: pod label cagip.io/entity (metrics), log tags
+  displayName: ""
+
+# ------------------------------------------------------------------------- AI Gateway
+gateway:
+  namespace: ai-gateway    # the gateway and every AI entity (KO on-prem: one namespace)
+  name: aigw               # OnPremAIGateway; the DataPlane is <name>-dp
+  hostname: ""             # served on https://<hostname>
+  image: kong/kong-ai-gateway:2.2.0
+  replicas: 2
+  workerProcesses: 2       # nginx workers per pod; one per node CPU does not fit 3Gi
+  resources:
+    requests: { cpu: 200m, memory: 512Mi }
+    limits: { cpu: "2", memory: 3Gi }
+  # kubernetes.io/tls Secret in gateway.namespace, labelled konghq.com/secret=true. Created out
+  # of band (cert-manager, PKI): never in Git.
+  tlsSecretName: ""
+  # Optional ConfigMap (key ca.crt) trusted for upstream TLS on top of the system bundle.
+  trustedCAConfigMap: ""
+  service:
+    type: LoadBalancer
+    annotations: {}
+  podLabels: {}
+
+license:
+  raw: ""                  # Kong licence JSON. Injected at deploy time, never committed.
+
+# ------------------------------------------------------------------------- platform policies
+# The central auth strategy. Every entity Model and MCP server must list it (aigw-models,
+# aigw-mcp-servers).
+auth:
+  name: cagip-oidc-adfs
+  displayName: CAGIP ADFS
+  issuer: ""               # https://adfs.example/adfs  (…/.well-known/openid-configuration is appended)
+  groupsClaim: groups      # → AIGatewayConsumerGroup by name; no known group → 403
+  userClaim: sub
+
+# Global policies (one top-level plugin each). Their types are reserved for the platform: an
+# entity policy of the same type on a Model would replace the global one on that route.
+observability:
+  prometheus: { enabled: true }
+  otel: { enabled: false, endpoint: "" }       # OTLP/HTTP base URL, e.g. http://otel:4318
+  httpLog: { enabled: false, endpoint: "" }    # e.g. http://es:9200/kong-ai/_doc
+  correlationId: { enabled: true, header: X-Correlation-ID }
+  logTags: { enabled: true }                   # claims → aigw_team / aigw_app / aigw_user log fields
+
+# Mandatory policies: not global (a global ai-prompt-guard breaks MCP traffic), so every entity
+# Model must attach them (aigw-models).
+mandatoryPolicies:
+  stripIdentity:
+    name: cagip-strip-identity
+    headers: [authorization, x-api-key, x-aigw-user, cookie]
+  baselineGuard:
+    name: cagip-baseline-guard
+    denyPatterns:
+      - 'FR\d{2}\s?(\d{4}\s?){5}\d{3}'           # French IBAN
+      - '\b(?:\d[ -]?){13,16}\b'                  # card number
+      - '(?i)ignore (all|previous) instructions'  # jailbreak string
+
+# ------------------------------------------------------------------------- governance
+# What the entity's Argo CD Application may do. RBAC grants the kinds; the VAPs check the content.
+governance:
+  platformServiceAccount: { namespace: argocd, name: platform-deployer }
+  entityServiceAccount: { namespace: argocd, name: entity-deployer }
+  # The entity's keys, created out of band (labelled konghq.com/secret=true). Providers reference
+  # it through secretRef; its keys are also exposed to the DataPlane as ENTITY_<KEY> env vars,
+  # so policies read them as {vault://env/entity-<key>} (OPENAI_BEARER → entity-openai-bearer).
+  credentialsSecret: entity-credentials
+  # Policy types the entity may create. Not here: platform types (prometheus, opentelemetry,
+  # http-log, correlation-id, request-transformer, ai-prompt-guard) and Lua (pre-/post-function).
+  policyTypes:
+    - ai-rate-limiting-advanced
+    - ai-semantic-prompt-guard
+    - ai-semantic-response-guard
+    - ai-sanitizer
+    - ai-custom-guardrail
+    - ai-gcp-model-armor
+    - ai-aws-guardrails
+    - ai-azure-content-safety
+    - ai-lakera-guard
+    - ai-llm-as-judge
+    - ai-semantic-cache
+    - ai-rag-injector
+    - ai-request-transformer
+    - ai-response-transformer
+    - ai-prompt-template
+    - ai-prompt-decorator
+    - response-transformer
+    - cors
+  providerTypes: [openai]  # AIGatewayModelProvider apiSpec.type
+  llmHosts: []             # hosts a provider or Model target may point at (token URL, upstreamURL, Vertex endpoint)
+  mcpHosts: []             # upstreams an MCP server may convert
+  tokenCapPerHour: 100000  # every token limit of an ai-rate-limiting-advanced policy, per hour
+  payloadLogging: false    # true: Models may log prompts and responses (PII)
+
+# ------------------------------------------------------------------------- Kong Operator subchart
+kong-operator:
+  fullnameOverride: kong-operator
+  image:
+    repository: kong/nightly-kong-operator
+    tag: "20261020"
+    effectiveSemver: "2.4.0"   # the nightly tag is not semver
+  env:
+    enable_controller_aigatewaydataplane: true   # AI GW 2.x controllers are opt-in
+    enable_controller_onpremaigateway: true
+
+global:
+  webhooks:
+    conversion: { enabled: false }   # only for pre-2.0 deprecated CRDs
+    validating: { enabled: false }   # ControlPlane resources, not used by the AI Gateway
+  certificateAuthority:
+    options:
+      certManager: { enabled: true } # stable CA under Argo CD (the chart's genCA re-renders on every sync)

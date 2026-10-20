@@ -1,0 +1,25 @@
+# The central auth strategy (ADFS). Entity Models and MCP servers list it in
+# access.authStrategies (enforced by aigw-models and aigw-mcp-servers). Unauthenticated calls get
+# 401; a token without a known group gets 403.
+apiVersion: aiconfiguration.konghq.com/v1alpha1
+kind: AIGatewayAuthStrategy
+metadata:
+  name: {{ .Values.auth.name }}
+  {{- include "cagip.meta" . | nindent 2 }}
+spec:
+  {{ include "cagip.gatewayRef" . }}
+  apiSpec:
+    type: openid-connect
+    openid-connect:
+      name: {{ .Values.auth.name }}
+      displayName: {{ .Values.auth.displayName | quote }}
+      config:
+        issuer: {{ .Values.auth.issuer }}/.well-known/openid-configuration
+        cacheTokensSalt: {{ .Values.auth.name }}-{{ .Values.entity.name }}
+        authMethods: [bearer]
+        credentialClaim: [{{ .Values.auth.userClaim }}]          # per-user credential, no Kong consumer
+        consumerGroupsClaim: [{{ .Values.auth.groupsClaim }}]
+        consumerGroupsOptional: Disabled
+        authenticatedGroupsClaim: [{{ .Values.auth.groupsClaim }}]
+        upstreamHeadersClaims: [{{ .Values.auth.userClaim }}]
+        upstreamHeadersNames: [x-aigw-user]

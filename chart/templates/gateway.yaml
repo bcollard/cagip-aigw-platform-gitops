@@ -1,0 +1,88 @@
+# The AI Gateway: one OnPremAIGateway (KO runs its control plane in-process and pushes the
+# DB-less config rendered from every AI entity of the namespace) and its DataPlane.
+apiVersion: aigateway.konghq.com/v1alpha1
+kind: OnPremAIGateway
+metadata:
+  name: {{ .Values.gateway.name }}
+  {{- include "cagip.meta" . | nindent 2 }}
+spec:
+  dataplaneSync: { intervalSeconds: 10, timeoutSeconds: 10 }
+---
+apiVersion: aigateway.konghq.com/v1alpha1
+kind: AIGatewayDataPlane
+metadata:
+  name: {{ .Values.gateway.name }}-dp
+  {{- include "cagip.meta" . | nindent 2 }}
+spec:
+  controlPlaneRef:
+    type: onpremNamespacedRef
+    onpremNamespacedRef: { name: {{ .Values.gateway.name }} }
+  deployment:
+    replicas: {{ .Values.gateway.replicas }}
+    podTemplateSpec:
+      metadata:
+        labels:
+          cagip.io/entity: {{ .Values.entity.name | quote }}
+          {{- with .Values.gateway.podLabels }}{{ toYaml . | nindent 10 }}{{ end }}
+      spec:
+        containers:
+          - name: aigw
+            image: {{ .Values.gateway.image }}
+            env:
+              - { name: KONG_ANONYMOUS_REPORTS, value: "off" }
+              - { name: KONG_NGINX_WORKER_PROCESSES, value: {{ .Values.gateway.workerProcesses | quote }} }
+              - { name: KONG_UNTRUSTED_LUA, value: strict }
+              - { name: KONG_TRACING_INSTRUMENTATIONS, value: all }
+              - { name: KONG_TRACING_SAMPLING_RATE, value: "1.0" }
+              {{- if .Values.gateway.trustedCAConfigMap }}
+              - { name: KONG_LUA_SSL_TRUSTED_CERTIFICATE, value: "system,/etc/aigw-ca/ca.crt" }
+              {{- end }}
+            # The entity's credentials as ENTITY_<KEY>: policies read them as {vault://env/entity-<key>}
+            # (plugin fields that take no secretRef, e.g. embeddings auth, vector DB password).
+            # Optional: the gateway starts before the entity has created its Secret.
+            envFrom:
+              - prefix: ENTITY_
+                secretRef: { name: {{ .Values.governance.credentialsSecret }}, optional: true }
+            {{- if .Values.gateway.trustedCAConfigMap }}
+            volumeMounts:
+              - { name: aigw-ca, mountPath: /etc/aigw-ca, readOnly: true }
+            {{- end }}
+            resources: {{ toYaml .Values.gateway.resources | nindent 14 }}
+        {{- if .Values.gateway.trustedCAConfigMap }}
+        volumes:
+          - { name: aigw-ca, configMap: { name: {{ .Values.gateway.trustedCAConfigMap }} } }
+        {{- end }}
+  network:
+    services:
+      ingress:
+        type: {{ .Values.gateway.service.type }}
+        {{- with .Values.gateway.service.annotations }}
+        annotations: {{ toYaml . | nindent 10 }}
+        {{- end }}
+        ports:
+          - { name: https, port: 443, targetPort: 8443 }
+---
+apiVersion: aiconfiguration.konghq.com/v1alpha1
+kind: AIGatewayCertificate
+metadata:
+  name: cagip-gateway-tls
+  {{- include "cagip.meta" . | nindent 2 }}
+spec:
+  {{ include "cagip.gatewayRef" . }}
+  apiSpec:
+    name: cagip-gateway-tls
+    cert: { type: secretRef, secretRef: { name: {{ .Values.gateway.tlsSecretName }}, key: tls.crt } }
+    key: { type: secretRef, secretRef: { name: {{ .Values.gateway.tlsSecretName }}, key: tls.key } }
+---
+apiVersion: aiconfiguration.konghq.com/v1alpha1
+kind: AIGatewaySNI
+metadata:
+  name: cagip-gateway-host
+  {{- include "cagip.meta" . | nindent 2 }}
+spec:
+  {{ include "cagip.gatewayRef" . }}
+  apiSpec:
+    name: cagip-gateway-host
+    displayName: {{ .Values.gateway.hostname }}
+    hostname: {{ .Values.gateway.hostname }}
+    certificate: { name: cagip-gateway-tls }

@@ -1,0 +1,8 @@
+# The AI Gateway namespace. Every AI entity lives here: on-prem, Kong Operator rejects
+# cross-namespace references. Platform and entity objects are told apart by cagip.io/owner.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.gateway.namespace }}
+  labels: { cagip.io/entity: {{ .Values.entity.name | quote }}, app.kubernetes.io/part-of: cagip-aigw-platform }
+  annotations: { argocd.argoproj.io/sync-wave: "-1" }
