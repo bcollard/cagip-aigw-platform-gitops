@@ -1,0 +1,562 @@
+# ValidatingAdmissionPolicies for the AI GW 2.x entities, one AI Gateway per entity namespace.
+# Bound to namespaces labelled cagip.io/entity (40-bindings.yaml). Per-entity parameters are the
+# namespace's labels and annotations, set at onboarding: entities have no rights on Namespaces.
+#
+#   labels       cagip.io/entity, cagip.io/token-cap-per-hour, cagip.io/payload-logging
+#   annotations  cagip.io/aigw, cagip.io/llm-provider-types, cagip.io/llm-hosts, cagip.io/mcp-hosts,
+#                cagip.io/hostnames
+#
+# Identities are told apart by virtual grants (10-rbac.yaml), read with the CEL authorizer:
+#   aigatewaypolicies/platform   CAGIP platform admins, Kong Operator → exempt from every rule
+#   aigatewaypolicies/aiops      CAGIP AIOps pipeline → aiops-* observability policies only
+#   aigatewaypolicies/ops-types  entity platform ops → ops-tier policy types
+#   aigatewaypolicies/lua        Lua in policies
+#
+# One VAP per kind: CEL on typed CRD fields is checked per resource, and a missing field on
+# another kind would be a runtime error (= Deny with failurePolicy: Fail).
+#
+# ---------------------------------------------------------------------------------------------
+# aigw-ownership — three write streams in one namespace. Entities cannot touch CAGIP objects
+# (cagip.io/owner), must label and prefix their own; AIOps touches aiops-* policies only.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata: { name: aigw-ownership, labels: { lcl.demo/governance: vap } }
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - { apiGroups: [aiconfiguration.konghq.com], apiVersions: ["*"], operations: [CREATE, UPDATE, DELETE], resources: ["*"] }
+  variables:
+    - name: platform
+      expression: >-
+        authorizer.group('aiconfiguration.konghq.com').resource('aigatewaypolicies').subresource('platform')
+          .namespace(request.namespace).check('create').allowed()
+    - name: aiops
+      expression: >-
+        authorizer.group('aiconfiguration.konghq.com').resource('aigatewaypolicies').subresource('aiops')
+          .namespace(request.namespace).check('create').allowed()
+    - name: entity
+      expression: "namespaceObject.metadata.labels['cagip.io/entity']"
+    - name: obj
+      expression: "request.operation == 'DELETE' ? oldObject : object"
+    - name: labels
+      expression: "has(variables.obj.metadata.labels) ? variables.obj.metadata.labels : {}"
+    - name: oldLabels
+      expression: "oldObject != null && has(oldObject.metadata.labels) ? oldObject.metadata.labels : {}"
+    - name: cagipObj
+      expression: "'cagip.io/owner' in variables.labels || 'cagip.io/owner' in variables.oldLabels"
+    - name: isAiops
+      expression: >-
+        [variables.labels, variables.oldLabels].all(l, size(l) == 0 ||
+          ('cagip.io/owner' in l && l['cagip.io/owner'] == 'platform' &&
+           'cagip.io/stream' in l && l['cagip.io/stream'] == 'aiops'))
+    # Namespace deletion and owner-reference cleanup run as these controllers: never in the way.
+    - name: k8s
+      expression: >-
+        request.userInfo.username in ['system:serviceaccount:kube-system:namespace-controller',
+                                      'system:serviceaccount:kube-system:generic-garbage-collector']
+  validations:
+    - expression: "variables.k8s || variables.platform || variables.aiops || !variables.cagipObj"
+      message: "objects labelled cagip.io/owner belong to CAGIP (platform core or AIOps stream)"
+      reason: Forbidden
+    - expression: >-
+        variables.k8s || variables.platform || variables.aiops || request.operation == 'DELETE' ||
+        ('cagip.io/entity' in variables.labels && variables.labels['cagip.io/entity'] == variables.entity)
+      messageExpression: "'entity objects carry the label cagip.io/entity: ' + variables.entity"
+      reason: Forbidden
+    - expression: >-
+        variables.k8s || variables.platform || variables.aiops || request.operation == 'DELETE' ||
+        variables.obj.metadata.name.startsWith(variables.entity + '-')
+      messageExpression: "'entity object names start with ' + variables.entity + '- (cagip-*, golden-*, aiops-* are reserved)'"
+      reason: Forbidden
+    - expression: >-
+        variables.k8s || variables.platform || !variables.aiops ||
+        (request.resource.resource == 'aigatewaypolicies' && variables.obj.metadata.name.startsWith('aiops-') && variables.isAiops)
+      message: "the AIOps stream manages aiops-* AIGatewayPolicies labelled cagip.io/owner=platform, cagip.io/stream=aiops only"
+      reason: Forbidden
+---
+# aigw-policy-types — policy type allow-list per persona tier, and how policies are scoped.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata: { name: aigw-policy-types, labels: { lcl.demo/governance: vap } }
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - { apiGroups: [aiconfiguration.konghq.com], apiVersions: ["*"], operations: [CREATE, UPDATE], resources: [aigatewaypolicies] }
+  variables:
+    - name: platform
+      expression: >-
+        authorizer.group('aiconfiguration.konghq.com').resource('aigatewaypolicies').subresource('platform')
+          .namespace(request.namespace).check('create').allowed()
+    - name: aiops
+      expression: >-
+        authorizer.group('aiconfiguration.konghq.com').resource('aigatewaypolicies').subresource('aiops')
+          .namespace(request.namespace).check('create').allowed()
+    - name: hasOps
+      expression: >-
+        authorizer.group('aiconfiguration.konghq.com').resource('aigatewaypolicies').subresource('ops-types')
+          .namespace(request.namespace).check('create').allowed()
+    - name: entity
+      expression: "namespaceObject.metadata.labels['cagip.io/entity']"
+    - name: type
+      expression: "has(object.spec.apiSpec.type) ? object.spec.apiSpec.type : ''"
+    - name: aiopsTypes
+      expression: "['prometheus', 'opentelemetry', 'datadog', 'statsd', 'zipkin']"
+    - name: ops
+      expression: >-
+        ['ai-rate-limiting-advanced', 'rate-limiting-advanced', 'ai-semantic-prompt-guard', 'ai-semantic-response-guard',
+         'ai-custom-guardrail', 'ai-gcp-model-armor', 'ai-aws-guardrails', 'ai-azure-content-safety', 'ai-lakera-guard',
+         'ai-llm-as-judge', 'ai-semantic-cache', 'ai-rag-injector', 'ai-request-transformer', 'ai-response-transformer',
+         'cors', 'request-transformer', 'response-transformer', 'pre-function', 'post-function']
+    - name: dev
+      expression: "['ai-prompt-template', 'ai-prompt-decorator']"
+    - name: cfg
+      expression: >-
+        object.spec.apiSpec.config.type == 'inline' && has(object.spec.apiSpec.config.value) ? object.spec.apiSpec.config.value : {}
+  validations:
+    - expression: >-
+        variables.platform ||
+        (variables.aiops ? variables.type in variables.aiopsTypes
+          : (variables.type in variables.dev || (variables.type in variables.ops && variables.hasOps)))
+      messageExpression: >-
+        variables.type == '' ? 'custom policies (customPolicyRef) are CAGIP\'s'
+        : "policy type '" + variables.type + "' is not allowed for this identity in namespace " + request.namespace
+      reason: Forbidden
+    - expression: "variables.platform || !has(object.spec.apiSpec.customPolicyRef)"
+      message: "custom (Lua) policies are CAGIP's: AIGatewayCustomPolicy and customPolicyRef need the platform grant"
+      reason: Forbidden
+    - expression: >-
+        variables.platform || variables.aiops ||
+        !has(object.spec.apiSpec.global) || object.spec.apiSpec.global != 'Enabled'
+      message: "entity policies are not global: attach them through a Model or MCP server policies[]"
+      reason: Forbidden
+    - expression: "variables.platform || object.spec.apiSpec.config.type == 'inline'"
+      message: "policy config is inline: secretRefs are for provider credentials (aigw-model-providers)"
+      reason: Forbidden
+    # Names carry the type, so Model rules (aigw-model-scope) can reason about it.
+    - expression: >-
+        variables.platform || variables.aiops || variables.type != 'ai-semantic-cache' ||
+        object.metadata.name.startsWith(variables.entity + '-cache-')
+      messageExpression: "'semantic caches are named ' + variables.entity + '-cache-*'"
+      reason: Forbidden
+    - expression: >-
+        variables.platform ||
+        (!('embeddings' in variables.cfg) || !('auth' in variables.cfg.embeddings) ||
+          ['header_value', 'param_value', 'gcp_service_account_json', 'aws_secret_access_key', 'azure_client_secret'].all(f,
+            !(f in variables.cfg.embeddings.auth) || variables.cfg.embeddings.auth[f] == null ||
+            (string(variables.cfg.embeddings.auth[f]).startsWith('{vault://env/entity-') && string(variables.cfg.embeddings.auth[f]).endsWith('}')))) &&
+        (!('vectordb' in variables.cfg) || !('pgvector' in variables.cfg.vectordb) ||
+          !('password' in variables.cfg.vectordb.pgvector) || string(variables.cfg.vectordb.pgvector.password).startsWith('{vault://'))
+      message: "embeddings credentials are the entity's own {vault://env/entity-…} key; the vector database password a {vault://…} reference"
+      reason: Forbidden
+---
+# aigw-lua-gate — Lua code needs aigatewaypolicies/lua, wherever it hides.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata: { name: aigw-lua-gate, labels: { lcl.demo/governance: vap } }
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - { apiGroups: [aiconfiguration.konghq.com], apiVersions: ["*"], operations: [CREATE, UPDATE], resources: [aigatewaypolicies] }
+  variables:
+    - name: hasLua
+      expression: >-
+        authorizer.group('aiconfiguration.konghq.com').resource('aigatewaypolicies').subresource('lua')
+          .namespace(request.namespace).check('create').allowed()
+    - name: cfg
+      expression: >-
+        object.spec.apiSpec.config.type == 'inline' && has(object.spec.apiSpec.config.value) ? object.spec.apiSpec.config.value : {}
+    - name: luaFields
+      expression: >-
+        ['request_prompt_count_function', 'custom_cost_count_function', 'custom_fields_by_lua', 'custom_attributes_by_lua']
+          .exists(f, f in variables.cfg) ||
+        ('access_logs' in variables.cfg && 'custom_attributes_by_lua' in variables.cfg.access_logs)
+  validations:
+    - expression: >-
+        variables.hasLua ||
+        !((has(object.spec.apiSpec.type) && object.spec.apiSpec.type in ['pre-function', 'post-function']) || variables.luaFields)
+      message: "Lua code (pre-/post-function or a *_function / *_by_lua field) needs the aigatewaypolicies/lua grant"
+      reason: Forbidden
+---
+# aigw-model-egress — where an entity Model may send traffic, through which CAGIP provider.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata: { name: aigw-model-egress, labels: { lcl.demo/governance: vap } }
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - { apiGroups: [aiconfiguration.konghq.com], apiVersions: ["*"], operations: [CREATE, UPDATE], resources: [aigatewaymodels] }
+  variables:
+    - name: platform
+      expression: >-
+        authorizer.group('aiconfiguration.konghq.com').resource('aigatewaypolicies').subresource('platform')
+          .namespace(request.namespace).check('create').allowed()
+    - name: ann
+      expression: "has(namespaceObject.metadata.annotations) ? namespaceObject.metadata.annotations : {}"
+    - name: entity
+      expression: "namespaceObject.metadata.labels['cagip.io/entity']"
+    - name: types
+      expression: "'cagip.io/llm-provider-types' in variables.ann ? variables.ann['cagip.io/llm-provider-types'].split(',') : []"
+    - name: hosts
+      expression: "'cagip.io/llm-hosts' in variables.ann ? variables.ann['cagip.io/llm-hosts'].split(',') : []"
+    - name: payloadsApproved
+      expression: >-
+        has(namespaceObject.metadata.labels) && 'cagip.io/payload-logging' in namespaceObject.metadata.labels &&
+        namespaceObject.metadata.labels['cagip.io/payload-logging'] == 'approved'
+  validations:
+    - expression: "variables.platform || (object.spec.apiSpec.type == 'model' && has(object.spec.apiSpec.model))"
+      message: "entity Models use type: model"
+      reason: Forbidden
+    - expression: >-
+        variables.platform || !has(object.spec.apiSpec.model) ||
+        object.spec.apiSpec.model.targets.all(t, t.provider.name.startsWith(variables.entity + '-'))
+      messageExpression: "'targets use the entity\\'s own providers (' + variables.entity + '-*)'"
+      reason: Forbidden
+    - expression: >-
+        variables.platform || !has(object.spec.apiSpec.model) ||
+        object.spec.apiSpec.model.targets.all(t, t.config.type in variables.types && t.config.type in ['openai', 'gemini'])
+      messageExpression: "'target types allowed for this entity: ' + variables.types.join(',') + ' (namespace annotation cagip.io/llm-provider-types)'"
+      reason: Forbidden
+    - expression: >-
+        variables.platform || !has(object.spec.apiSpec.model) || object.spec.apiSpec.model.targets.all(t,
+          (!has(t.config.openai) || !has(t.config.openai.upstreamURL) ||
+            url(t.config.openai.upstreamURL).getHostname() in variables.hosts) &&
+          (!has(t.config.gemini) || (
+            (!has(t.config.gemini.upstreamURL) || url(t.config.gemini.upstreamURL).getHostname() in variables.hosts) &&
+            (!has(t.config.gemini.gcpEnvironment) || !has(t.config.gemini.gcpEnvironment.apiEndpoint) ||
+              t.config.gemini.gcpEnvironment.apiEndpoint in variables.hosts))))
+      message: "target endpoint host not allowed for this entity (namespace annotation cagip.io/llm-hosts)"
+      reason: Forbidden
+    - expression: >-
+        variables.platform || !has(object.spec.apiSpec.model) ||
+        object.spec.apiSpec.model.targets.all(t, !has(t.allowAuthOverride) || t.allowAuthOverride != 'Enabled')
+      message: "allowAuthOverride would let a client send its own provider credentials"
+      reason: Forbidden
+    - expression: >-
+        variables.platform || variables.payloadsApproved || !has(object.spec.apiSpec.model) ||
+        !has(object.spec.apiSpec.model.config.logging) || !has(object.spec.apiSpec.model.config.logging.payloads) ||
+        object.spec.apiSpec.model.config.logging.payloads != 'Enabled'
+      message: "logging.payloads: Enabled needs the namespace label cagip.io/payload-logging=approved (PII)"
+      reason: Forbidden
+---
+# aigw-model-scope — which gateway, paths and hosts, and what every LLM Model must carry.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata: { name: aigw-model-scope, labels: { lcl.demo/governance: vap } }
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - { apiGroups: [aiconfiguration.konghq.com], apiVersions: ["*"], operations: [CREATE, UPDATE], resources: [aigatewaymodels] }
+  matchConditions:
+    - name: model-arm
+      expression: "has(object.spec.apiSpec.model)"
+  variables:
+    - name: platform
+      expression: >-
+        authorizer.group('aiconfiguration.konghq.com').resource('aigatewaypolicies').subresource('platform')
+          .namespace(request.namespace).check('create').allowed()
+    - name: entity
+      expression: "namespaceObject.metadata.labels['cagip.io/entity']"
+    - name: ann
+      expression: "has(namespaceObject.metadata.annotations) ? namespaceObject.metadata.annotations : {}"
+    - name: m
+      expression: "object.spec.apiSpec.model"
+    - name: pol
+      expression: "has(variables.m.policies) ? variables.m.policies.map(p, p.name) : []"
+    - name: allowNames
+      expression: >-
+        has(variables.m.access) && has(variables.m.access.acls) && has(variables.m.access.acls.allow)
+          ? variables.m.access.acls.allow.allow.map(a, a.name) : []
+  validations:
+    - expression: >-
+        variables.platform || (object.spec.aiGatewayRef.kind == 'OnPremAIGateway' &&
+          'cagip.io/aigw' in variables.ann && object.spec.aiGatewayRef.namespacedRef.name == variables.ann['cagip.io/aigw'])
+      messageExpression: "'Models attach to this entity\\'s gateway only (OnPremAIGateway ' + variables.ann['cagip.io/aigw'] + ')'"
+      reason: Forbidden
+    - expression: >-
+        variables.platform || (has(variables.m.config.route.paths) && size(variables.m.config.route.paths) > 0 &&
+          variables.m.config.route.paths.all(p, p == '/' + variables.entity || p.startsWith('/' + variables.entity + '/')))
+      messageExpression: "'every path starts with /' + variables.entity + '/'"
+      reason: Forbidden
+    - expression: >-
+        variables.platform || !has(variables.m.config.route.hosts) || variables.m.config.route.hosts.all(h,
+          'cagip.io/hostnames' in variables.ann && h in variables.ann['cagip.io/hostnames'].split(','))
+      message: "route hosts must be listed in the namespace annotation cagip.io/hostnames"
+      reason: Forbidden
+    - expression: >-
+        variables.platform || (has(variables.m.access) && has(variables.m.access.authStrategies) &&
+          variables.m.access.authStrategies.exists(a, a.name == 'cagip-oidc-adfs'))
+      message: "every entity Model lists the central auth strategy cagip-oidc-adfs"
+      reason: Forbidden
+    - expression: "variables.platform || 'cagip-shared-strip-identity' in variables.pol"
+      message: "every LLM Model references cagip-shared-strip-identity: the user's ADFS token must not reach the provider"
+      reason: Forbidden
+    - expression: "variables.platform || 'cagip-shared-baseline-guard' in variables.pol"
+      message: "every LLM Model references cagip-shared-baseline-guard"
+      reason: Forbidden
+    - expression: >-
+        variables.platform || !('cagip-shared-pii' in variables.pol) ||
+        variables.pol.all(p, !p.startsWith(variables.entity + '-cache-'))
+      message: "no semantic cache next to cagip-shared-pii: cached answers would carry another customer's restored PII"
+      reason: Forbidden
+    - expression: >-
+        variables.platform || variables.pol.all(p, p.startsWith(variables.entity + '-') || p.startsWith('cagip-shared-'))
+      messageExpression: "'Models reference ' + variables.entity + '-* or cagip-shared-* policies only'"
+      reason: Forbidden
+    - expression: "variables.platform || variables.allowNames.all(n, n.startsWith(variables.entity + '-'))"
+      messageExpression: "'ACLs reference ' + variables.entity + '-* consumer groups only'"
+      reason: Forbidden
+---
+# aigw-mcp-servers — MCP servers: no open-ended upstream, allowed hosts, gateway, path, auth.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata: { name: aigw-mcp-servers, labels: { lcl.demo/governance: vap } }
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - { apiGroups: [aiconfiguration.konghq.com], apiVersions: ["*"], operations: [CREATE, UPDATE], resources: [aigatewaymcpservers] }
+  variables:
+    - name: platform
+      expression: >-
+        authorizer.group('aiconfiguration.konghq.com').resource('aigatewaypolicies').subresource('platform')
+          .namespace(request.namespace).check('create').allowed()
+    - name: entity
+      expression: "namespaceObject.metadata.labels['cagip.io/entity']"
+    - name: ann
+      expression: "has(namespaceObject.metadata.annotations) ? namespaceObject.metadata.annotations : {}"
+    - name: mcpHosts
+      expression: "'cagip.io/mcp-hosts' in variables.ann ? variables.ann['cagip.io/mcp-hosts'].split(',') : []"
+    - name: cl
+      # Map-style access: has(apiSpec.conversion__dash__listener) is false on this CRD (measured, k8s 1.36).
+      expression: "'conversion-listener' in object.spec.apiSpec ? [object.spec.apiSpec['conversion-listener']] : []"
+  validations:
+    - expression: "variables.platform || object.spec.apiSpec.type == 'conversion-listener'"
+      message: "entity MCP servers are conversion-listener: listener, passthrough-listener and upstream-server need CAGIP approval"
+      reason: Forbidden
+    - expression: >-
+        variables.platform || (object.spec.aiGatewayRef.kind == 'OnPremAIGateway' &&
+          'cagip.io/aigw' in variables.ann && object.spec.aiGatewayRef.namespacedRef.name == variables.ann['cagip.io/aigw'])
+      message: "MCP servers attach to this entity's gateway only"
+      reason: Forbidden
+    - expression: >-
+        variables.platform || variables.cl.all(s,
+          url(s.config.url).getHostname() in variables.mcpHosts &&
+          (!has(s.tools) || s.tools.all(t, !has(t.host) || t.host in variables.mcpHosts)))
+      message: "MCP upstream host not allowed for this entity (namespace annotation cagip.io/mcp-hosts)"
+      reason: Forbidden
+    - expression: >-
+        variables.platform || variables.cl.all(s, has(s.config.route) && has(s.config.route.paths) &&
+          s.config.route.paths.all(p, p == '/' + variables.entity || p.startsWith('/' + variables.entity + '/')))
+      messageExpression: "'every path starts with /' + variables.entity + '/'"
+      reason: Forbidden
+    - expression: >-
+        variables.platform || variables.cl.all(s, has(s.access) && has(s.access.consumer) &&
+          has(s.access.consumer.authStrategies) && s.access.consumer.authStrategies.exists(a, a.name == 'cagip-oidc-adfs'))
+      message: "every entity MCP server lists the central auth strategy cagip-oidc-adfs"
+      reason: Forbidden
+    - expression: >-
+        variables.platform || variables.cl.all(s, !has(s.policies) ||
+          s.policies.all(p, p.name.startsWith(variables.entity + '-') || p.name.startsWith('cagip-shared-')))
+      messageExpression: "'MCP servers reference ' + variables.entity + '-* or cagip-shared-* policies only'"
+      reason: Forbidden
+---
+# aigw-token-cap — the entity's quota must carry a total under the namespace cap, and count in
+# the entity's own Redis counter namespace.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata: { name: aigw-token-cap, labels: { lcl.demo/governance: vap } }
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - { apiGroups: [aiconfiguration.konghq.com], apiVersions: ["*"], operations: [CREATE, UPDATE], resources: [aigatewaypolicies] }
+  matchConditions:
+    - name: is-rate-limit
+      expression: >-
+        has(object.spec.apiSpec.type) && object.spec.apiSpec.type in ['ai-rate-limiting-advanced', 'rate-limiting-advanced']
+  variables:
+    - name: platform
+      expression: >-
+        authorizer.group('aiconfiguration.konghq.com').resource('aigatewaypolicies').subresource('platform')
+          .namespace(request.namespace).check('create').allowed()
+    - name: prefix
+      expression: "namespaceObject.metadata.labels['cagip.io/entity'] + '-'"
+    - name: cfg
+      expression: >-
+        object.spec.apiSpec.config.type == 'inline' && has(object.spec.apiSpec.config.value) ? object.spec.apiSpec.config.value : {}
+    - name: cap
+      expression: >-
+        has(namespaceObject.metadata.labels) && 'cagip.io/token-cap-per-hour' in namespaceObject.metadata.labels
+          ? double(namespaceObject.metadata.labels['cagip.io/token-cap-per-hour']) : 0.0
+    - name: policies
+      expression: "'policies' in variables.cfg ? variables.cfg.policies : []"
+  validations:
+    - expression: >-
+        variables.platform || ('namespace' in variables.cfg && string(variables.cfg.namespace).startsWith(variables.prefix))
+      messageExpression: "'rate-limit config.namespace must be set and start with ' + variables.prefix"
+      reason: Forbidden
+    - expression: "variables.platform || object.spec.apiSpec.type != 'ai-rate-limiting-advanced' || ('strategy' in variables.cfg && variables.cfg.strategy == 'redis')"
+      message: "strategy must be redis (local counts per pod)"
+      reason: Forbidden
+    - expression: >-
+        variables.platform || object.spec.apiSpec.type != 'ai-rate-limiting-advanced' ||
+        variables.policies.exists(p, !('match' in p) || size(p.match) == 0)
+      message: "the plan needs one policy with no match: the entity's total budget"
+      reason: Forbidden
+    - expression: >-
+        variables.platform || object.spec.apiSpec.type != 'ai-rate-limiting-advanced' ||
+        variables.policies.all(p, !('limits' in p) || p.limits.all(l,
+          ('tokens_count_strategy' in l && l.tokens_count_strategy == 'cost') ||
+          double(l.limit) * 3600.0 / double(l.window_size) <= variables.cap))
+      messageExpression: >-
+        'a token limit is above this entity cap of ' + string(variables.cap) +
+        ' tokens/hour (namespace label cagip.io/token-cap-per-hour)'
+      reason: Forbidden
+---
+# aigw-consumergroup-scope — tiers are matchers inside the quota policy, not policies on groups.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata: { name: aigw-consumergroup-scope, labels: { lcl.demo/governance: vap } }
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - { apiGroups: [aiconfiguration.konghq.com], apiVersions: ["*"], operations: [CREATE, UPDATE], resources: [aigatewayconsumergroups] }
+  variables:
+    - name: platform
+      expression: >-
+        authorizer.group('aiconfiguration.konghq.com').resource('aigatewaypolicies').subresource('platform')
+          .namespace(request.namespace).check('create').allowed()
+    - name: prefix
+      expression: "namespaceObject.metadata.labels['cagip.io/entity'] + '-'"
+  validations:
+    - expression: "variables.platform || !has(object.spec.apiSpec.policies) || size(object.spec.apiSpec.policies) == 0"
+      message: "no policies on consumer groups: tiers are matchers inside the entity's quota policy"
+      reason: Forbidden
+    - expression: "variables.platform || object.spec.apiSpec.name.startsWith(variables.prefix)"
+      messageExpression: "'consumer group names (apiSpec.name, the ADFS group) start with ' + variables.prefix"
+      reason: Forbidden
+---
+# aigw-model-providers — entities manage their own providers (since 2026-10-20). CAGIP keeps
+# the say on which provider types and endpoints, and on how keys are held: secretRef to the
+# entity's own Secret, never inline (an inline key would be readable by every viewer).
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata: { name: aigw-model-providers, labels: { lcl.demo/governance: vap } }
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - { apiGroups: [aiconfiguration.konghq.com], apiVersions: ["*"], operations: [CREATE, UPDATE], resources: [aigatewaymodelproviders] }
+  variables:
+    - name: platform
+      expression: >-
+        authorizer.group('aiconfiguration.konghq.com').resource('aigatewaypolicies').subresource('platform')
+          .namespace(request.namespace).check('create').allowed()
+    - name: entity
+      expression: "namespaceObject.metadata.labels['cagip.io/entity']"
+    - name: ann
+      expression: "has(namespaceObject.metadata.annotations) ? namespaceObject.metadata.annotations : {}"
+    - name: types
+      expression: "'cagip.io/llm-provider-types' in variables.ann ? variables.ann['cagip.io/llm-provider-types'].split(',') : []"
+    - name: hosts
+      expression: "'cagip.io/llm-hosts' in variables.ann ? variables.ann['cagip.io/llm-hosts'].split(',') : []"
+    # Map-style access: the arm is named by apiSpec.type.
+    - name: auth
+      expression: >-
+        object.spec.apiSpec.type in object.spec.apiSpec && 'auth' in object.spec.apiSpec[object.spec.apiSpec.type].config
+          ? object.spec.apiSpec[object.spec.apiSpec.type].config.auth : {}
+    - name: values
+      expression: >-
+        ('headers' in variables.auth ? variables.auth.headers.map(h, h.value) : []) +
+        ('params' in variables.auth ? variables.auth.params.map(p, p.value) : []) +
+        ('basic' in variables.auth && 'headers' in variables.auth.basic ? variables.auth.basic.headers.map(h, h.value) : []) +
+        ('basic' in variables.auth && 'params' in variables.auth.basic ? variables.auth.basic.params.map(p, p.value) : []) +
+        ('gcp' in variables.auth && 'serviceAccountJSON' in variables.auth.gcp ? [variables.auth.gcp.serviceAccountJSON] : [])
+    - name: urls
+      expression: >-
+        ('gcp' in variables.auth && 'oauthTokenURL' in variables.auth.gcp ? [variables.auth.gcp.oauthTokenURL] : []) +
+        ('gcp' in variables.auth && 'metadataURL' in variables.auth.gcp ? [variables.auth.gcp.metadataURL] : [])
+  validations:
+    - expression: "variables.platform || object.spec.apiSpec.type in variables.types"
+      messageExpression: "'provider type ' + object.spec.apiSpec.type + ' not allowed for this entity (namespace annotation cagip.io/llm-provider-types: ' + variables.types.join(',') + ')'"
+      reason: Forbidden
+    - expression: >-
+        variables.platform || variables.values.all(v, v.type == 'secretRef' &&
+          v.secretRef.name.startsWith(variables.entity + '-') &&
+          (!('namespace' in v.secretRef) || v.secretRef.namespace == request.namespace))
+      messageExpression: "'provider credentials are secretRefs to the entity\\'s own Secrets (' + variables.entity + '-*), never inline'"
+      reason: Forbidden
+    - expression: "variables.platform || variables.urls.all(u, url(u).getHostname() in variables.hosts)"
+      message: "GCP token/metadata endpoint host not allowed for this entity (namespace annotation cagip.io/llm-hosts)"
+      reason: Forbidden
+---
+# aigw-entity-secrets — entities write their provider keys, write-only (no get in RBAC), and only
+# <entity>-* Opaque Secrets: CAGIP's backend credential and KO's certificates stay untouchable.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata: { name: aigw-entity-secrets, labels: { lcl.demo/governance: vap } }
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - { apiGroups: [""], apiVersions: ["v1"], operations: [CREATE, UPDATE, DELETE], resources: [secrets] }
+  variables:
+    - name: platform
+      expression: >-
+        authorizer.group('aiconfiguration.konghq.com').resource('aigatewaypolicies').subresource('platform')
+          .namespace(request.namespace).check('create').allowed()
+    - name: entity
+      expression: "namespaceObject.metadata.labels['cagip.io/entity']"
+    - name: obj
+      expression: "request.operation == 'DELETE' ? oldObject : object"
+    # Namespace deletion and owner-reference cleanup run as these controllers: never in the way.
+    - name: k8s
+      expression: >-
+        request.userInfo.username in ['system:serviceaccount:kube-system:namespace-controller',
+                                      'system:serviceaccount:kube-system:generic-garbage-collector']
+  validations:
+    - expression: "variables.k8s || variables.platform || variables.obj.metadata.name.startsWith(variables.entity + '-')"
+      messageExpression: "'entity Secrets are named ' + variables.entity + '-*: the other Secrets here are CAGIP\\'s and Kong Operator\\'s'"
+      reason: Forbidden
+    - expression: >-
+        variables.k8s || variables.platform || request.operation == 'DELETE' ||
+        ((!has(object.type) || object.type == 'Opaque') && has(object.metadata.labels) &&
+         'cagip.io/entity' in object.metadata.labels && object.metadata.labels['cagip.io/entity'] == variables.entity)
+      messageExpression: "'entity Secrets are Opaque and labelled cagip.io/entity: ' + variables.entity"
+      reason: Forbidden
+---
+# aigw-dataplane-scaling-only — the proxy team may scale an entity's DataPlane, not change what runs.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata: { name: aigw-dataplane-scaling-only, labels: { lcl.demo/governance: vap } }
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - { apiGroups: [aigateway.konghq.com], apiVersions: ["*"], operations: [UPDATE], resources: [aigatewaydataplanes] }
+  variables:
+    - name: platform
+      expression: >-
+        authorizer.group('aiconfiguration.konghq.com').resource('aigatewaypolicies').subresource('platform')
+          .namespace(request.namespace).check('create').allowed()
+    - name: shape
+      expression: >-
+        has(object.spec.deployment) && has(object.spec.deployment.podTemplateSpec)
+          ? object.spec.deployment.podTemplateSpec.spec.containers.map(c, [c.name, has(c.image) ? c.image : '', has(c.env) ? c.env : []]) : []
+    - name: oldShape
+      expression: >-
+        has(oldObject.spec.deployment) && has(oldObject.spec.deployment.podTemplateSpec)
+          ? oldObject.spec.deployment.podTemplateSpec.spec.containers.map(c, [c.name, has(c.image) ? c.image : '', has(c.env) ? c.env : []]) : []
+  validations:
+    - expression: >-
+        variables.platform || (variables.shape == variables.oldShape &&
+          object.spec.controlPlaneRef == oldObject.spec.controlPlaneRef &&
+          (has(object.spec.network) ? object.spec.network : {}) == (has(oldObject.spec.network) ? oldObject.spec.network : {}))
+      message: "only replicas and resources may change: image, env (vault credentials), control plane and network are CAGIP's"
+      reason: Forbidden

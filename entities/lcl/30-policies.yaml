@@ -1,0 +1,124 @@
+# CAGIP platform core, in every entity namespace (bin/onboard-entity.sh, as platform admin).
+#   golden-*   global: Enabled → one top-level plugin on this entity's gateway
+#   cagip-*    global: Disabled → attached by the entity's Models / MCP servers through policies[]
+# Observability (Prometheus, OpenTelemetry) is a separate stream: manifests/aiops/, applied by
+# the AIOps pipeline. A policy's config.value is plain snake_case plugin config.
+#
+apiVersion: aiconfiguration.konghq.com/v1alpha1
+kind: AIGatewayPolicy
+metadata: { name: golden-http-log, namespace: lcl, labels: { cagip.io/owner: platform, cagip.io/stream: core } }
+spec:
+  aiGatewayRef: { group: aigateway.konghq.com, kind: OnPremAIGateway, namespacedRef: { name: lcl-aigw } }
+  apiSpec:
+    name: golden-http-log
+    displayName: Golden · HTTP log to Elasticsearch
+    type: http-log
+    global: Enabled
+    config:
+      type: inline
+      value:
+        http_endpoint: http://es.lclv2.demo.internal:9200/kong-ai/_doc
+        content_type: application/json
+        queue: { max_batch_size: 1 }
+        custom_fields_by_lua:
+          lcl_team: "return kong.ctx.shared.lcl_team"
+          lcl_app: "return kong.ctx.shared.lcl_app"
+          lcl_user: "return kong.ctx.shared.lcl_user"
+          request.headers.authorization: "return nil"
+---
+apiVersion: aiconfiguration.konghq.com/v1alpha1
+kind: AIGatewayPolicy
+metadata: { name: golden-correlation-id, namespace: lcl, labels: { cagip.io/owner: platform, cagip.io/stream: core } }
+spec:
+  aiGatewayRef: { group: aigateway.konghq.com, kind: OnPremAIGateway, namespacedRef: { name: lcl-aigw } }
+  apiSpec:
+    name: golden-correlation-id
+    displayName: Golden · Correlation ID
+    type: correlation-id
+    global: Enabled
+    config:
+      type: inline
+      value: { header_name: X-Correlation-ID, generator: uuid, echo_downstream: true }
+---
+# ---------------------------------------------------------------------------- shared (opt-in)
+# ADFS stands behind Keycloak. v1: the cagip-oidc-adfs KongClusterPlugin; v2: an AuthStrategy,
+# listed in a Model / MCP server's access.authStrategies. The converter adds an anonymous
+# consumer + request-termination 401 for unauthenticated calls.
+apiVersion: aiconfiguration.konghq.com/v1alpha1
+kind: AIGatewayAuthStrategy
+metadata: { name: cagip-oidc-adfs, namespace: lcl, labels: { cagip.io/owner: platform, cagip.io/stream: core } }
+spec:
+  aiGatewayRef: { group: aigateway.konghq.com, kind: OnPremAIGateway, namespacedRef: { name: lcl-aigw } }
+  apiSpec:
+    type: openid-connect
+    openid-connect:
+      name: cagip-oidc-adfs
+      displayName: CAGIP ADFS (Keycloak in the lab)
+      config:
+        issuer: https://keycloak.kong.runlocal.dev/realms/lcl-aigw/.well-known/openid-configuration
+        cacheTokensSalt: cagip-adfs-lcl
+        authMethods: [bearer]
+        credentialClaim: [sub]               # per-user credential, no Kong consumer
+        consumerGroupsClaim: [groups]        # → AIGatewayConsumerGroup by name
+        consumerGroupsOptional: Disabled     # no known group → 403
+        authenticatedGroupsClaim: [groups]
+        upstreamHeadersClaims: [sub]
+        upstreamHeadersNames: [x-lcl-user]
+---
+# The user's ADFS token must not leave CAGIP: Kong would forward the client's Authorization
+# header (the ADFS JWT) and x-lcl-user to the LLM provider. Mandatory on every LLM Model,
+# not on MCP servers (tool calls forward the token).
+apiVersion: aiconfiguration.konghq.com/v1alpha1
+kind: AIGatewayPolicy
+metadata: { name: cagip-shared-strip-identity, namespace: lcl, labels: { cagip.io/owner: platform, cagip.io/stream: core } }
+spec:
+  aiGatewayRef: { group: aigateway.konghq.com, kind: OnPremAIGateway, namespacedRef: { name: lcl-aigw } }
+  apiSpec:
+    name: cagip-shared-strip-identity
+    displayName: CAGIP · strip identity before the provider
+    type: request-transformer
+    global: Disabled
+    config:
+      type: inline
+      value:
+        remove: { headers: [authorization, x-api-key, x-lcl-user, cookie] }
+---
+# Not global: a global ai-prompt-guard breaks non-LLM traffic (MCP). Mandatory on every LLM Model.
+apiVersion: aiconfiguration.konghq.com/v1alpha1
+kind: AIGatewayPolicy
+metadata: { name: cagip-shared-baseline-guard, namespace: lcl, labels: { cagip.io/owner: platform, cagip.io/stream: core } }
+spec:
+  aiGatewayRef: { group: aigateway.konghq.com, kind: OnPremAIGateway, namespacedRef: { name: lcl-aigw } }
+  apiSpec:
+    name: cagip-shared-baseline-guard
+    displayName: CAGIP · baseline prompt guard
+    type: ai-prompt-guard
+    global: Disabled
+    config:
+      type: inline
+      value:
+        match_all_roles: true
+        allow_all_conversation_history: false
+        deny_patterns:
+          - 'FR\d{2}\s?(\d{4}\s?){5}\d{3}'           # French IBAN
+          - '\b(?:\d[ -]?){13,16}\b'                  # card number
+          - '(?i)ignore (all|previous) instructions'  # jailbreak string
+---
+apiVersion: aiconfiguration.konghq.com/v1alpha1
+kind: AIGatewayPolicy
+metadata: { name: cagip-shared-pii, namespace: lcl, labels: { cagip.io/owner: platform, cagip.io/stream: core } }
+spec:
+  aiGatewayRef: { group: aigateway.konghq.com, kind: OnPremAIGateway, namespacedRef: { name: lcl-aigw } }
+  apiSpec:
+    name: cagip-shared-pii
+    displayName: CAGIP · PII sanitizer
+    type: ai-sanitizer
+    global: Disabled
+    config:
+      type: inline
+      value:
+        host: ai-pii-service.aigw-backends.svc.cluster.local
+        port: 8080
+        sanitization_mode: INPUT
+        anonymize: [general, email, phone, creditcard, bank, nationalid]
+        recover_redacted: true

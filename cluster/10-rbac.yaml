@@ -1,0 +1,139 @@
+# Personas, cluster-wide part. One AI Gateway per entity namespace: the namespace is the tenancy
+# boundary, and three write streams meet in each entity namespace:
+#   platform core   CAGIP platform admins: gateway, DataPlane, auth, golden + shared policies
+#   AIOps           CAGIP AIOps pipeline: aiops-* observability policies (Prometheus, OTel)
+#   entity GitOps   the entity's own providers (+ their keys), Models, policies, groups, MCP servers
+#
+# Rules on aigatewaypolicies subresources that do not exist (/platform, /aiops, /ops-types, /lua)
+# are "virtual grants": the VAPs read them with the CEL authorizer, so a VAP and a RoleBinding
+# cannot drift apart.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: { name: cagip-platform-admin, labels: { lcl.demo/governance: rbac } }
+rules:
+  - apiGroups: [aigateway.konghq.com, aiconfiguration.konghq.com, configuration.konghq.com]
+    resources: ["*"]
+    verbs: ["*"]
+  - apiGroups: [aiconfiguration.konghq.com]
+    resources: [aigatewaypolicies/platform, aigatewaypolicies/aiops, aigatewaypolicies/ops-types, aigatewaypolicies/lua]
+    verbs: [create, update, delete]
+  - apiGroups: [""]
+    resources: [namespaces, secrets, services, configmaps, serviceaccounts]
+    verbs: ["*"]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [roles, rolebindings]
+    verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: { name: cagip-platform-admin, labels: { lcl.demo/governance: rbac } }
+subjects: [{ kind: Group, name: cagip-platform-admins, apiGroup: rbac.authorization.k8s.io }]
+roleRef: { kind: ClusterRole, name: cagip-platform-admin, apiGroup: rbac.authorization.k8s.io }
+---
+# CAGIP proxy team — reads every AI Gateway, scales DataPlanes. Field lock: aigw-dataplane-scaling-only.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: { name: cagip-proxy-team, labels: { lcl.demo/governance: rbac } }
+rules:
+  - apiGroups: [aigateway.konghq.com, aiconfiguration.konghq.com]
+    resources: ["*"]
+    verbs: [get, list, watch]
+  - apiGroups: [aigateway.konghq.com]
+    resources: [aigatewaydataplanes]
+    verbs: [update, patch]
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [get, list, watch, patch]     # rollout restart of DataPlanes
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: { name: cagip-proxy-team, labels: { lcl.demo/governance: rbac } }
+subjects: [{ kind: Group, name: cagip-proxy-team, apiGroup: rbac.authorization.k8s.io }]
+roleRef: { kind: ClusterRole, name: cagip-proxy-team, apiGroup: rbac.authorization.k8s.io }
+---
+# CAGIP AIOps — writes AIGatewayPolicies in every entity namespace; aigw-ownership and
+# aigw-policy-types narrow that to aiops-* observability policies. /lua: the OTel policy carries
+# custom_attributes_by_lua.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: { name: cagip-aiops, labels: { lcl.demo/governance: rbac } }
+rules:
+  - apiGroups: [aiconfiguration.konghq.com]
+    resources: [aigatewaypolicies]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [aiconfiguration.konghq.com]
+    resources: [aigatewaypolicies/aiops, aigatewaypolicies/lua]
+    verbs: [create, update, delete]
+  - apiGroups: [aigateway.konghq.com, aiconfiguration.konghq.com]
+    resources: ["*"]
+    verbs: [get, list, watch]
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: aiops-gitops, namespace: cagip-platform, labels: { lcl.demo/governance: rbac } }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: { name: cagip-aiops, labels: { lcl.demo/governance: rbac } }
+subjects:
+  - { kind: Group, name: cagip-aiops, apiGroup: rbac.authorization.k8s.io }
+  - { kind: ServiceAccount, name: aiops-gitops, namespace: cagip-platform }   # the AIOps pipeline
+roleRef: { kind: ClusterRole, name: cagip-aiops, apiGroup: rbac.authorization.k8s.io }
+---
+# Kong Operator: its own updates on AI entities (finalizers) go through admission too.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: { name: kong-operator-virtual-grants, labels: { lcl.demo/governance: rbac } }
+rules:
+  - apiGroups: [aiconfiguration.konghq.com]
+    resources: [aigatewaypolicies/platform, aigatewaypolicies/ops-types, aigatewaypolicies/lua]
+    verbs: [create, update, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: { name: kong-operator-virtual-grants, labels: { lcl.demo/governance: rbac } }
+subjects: [{ kind: ServiceAccount, name: controller-manager, namespace: kong-system }]
+roleRef: { kind: ClusterRole, name: kong-operator-virtual-grants, apiGroup: rbac.authorization.k8s.io }
+---
+# ------------------------------------------------------------------ entity roles (bound per namespace)
+# What an entity may write: its model providers (AI providers are entity-managed since
+# 2026-10-20), Models, policies, consumer groups, MCP servers, and its provider keys as Secrets
+# WRITE-ONLY (create/update/patch/delete, never get/list/watch: the namespace also holds CAGIP's
+# backend credential and the KO admin client certificate; aigw-entity-secrets limits writes to
+# <entity>-* Secrets). Nothing else: no auth strategies, certificates, vaults, custom (Lua)
+# policies, consumers or credentials (an api-key consumer would bypass ADFS), agents.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: { name: entity-platform-ops, labels: { lcl.demo/governance: rbac } }
+rules:
+  - apiGroups: [aiconfiguration.konghq.com]
+    resources: [aigatewaymodelproviders, aigatewaymodels, aigatewaypolicies, aigatewayconsumergroups, aigatewaymcpservers]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create, update, patch, delete]     # write-only: apply with --server-side
+  - apiGroups: [aiconfiguration.konghq.com]
+    resources: [aigatewaypolicies/ops-types, aigatewaypolicies/lua]     # virtual grants, read by the VAPs
+    verbs: [create, update, delete]
+  - apiGroups: [aigateway.konghq.com, aiconfiguration.konghq.com]
+    resources: ["*"]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: { name: entity-developer, labels: { lcl.demo/governance: rbac } }
+rules:
+  - apiGroups: [aiconfiguration.konghq.com]
+    resources: [aigatewaypolicies]     # aigw-policy-types limits them to the dev tier
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [aigateway.konghq.com, aiconfiguration.konghq.com]
+    resources: ["*"]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: { name: entity-viewer, labels: { lcl.demo/governance: rbac } }
+rules:
+  - apiGroups: [aigateway.konghq.com, aiconfiguration.konghq.com]
+    resources: ["*"]
+    verbs: [get, list, watch]

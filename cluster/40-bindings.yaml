@@ -1,0 +1,89 @@
+# Bindings: every VAP applies to entity namespaces (label cagip.io/entity). Deleting them
+# (VAPS=off ./06-platform.sh) leaves RBAC alone, for the comparison.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata: { name: aigw-ownership, labels: { lcl.demo/governance: vap } }
+spec:
+  policyName: aigw-ownership
+  validationActions: [Deny]
+  matchResources: { namespaceSelector: { matchExpressions: [{ key: cagip.io/entity, operator: Exists }] } }
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata: { name: aigw-policy-types, labels: { lcl.demo/governance: vap } }
+spec:
+  policyName: aigw-policy-types
+  validationActions: [Deny]
+  matchResources: { namespaceSelector: { matchExpressions: [{ key: cagip.io/entity, operator: Exists }] } }
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata: { name: aigw-lua-gate, labels: { lcl.demo/governance: vap } }
+spec:
+  policyName: aigw-lua-gate
+  validationActions: [Deny]
+  matchResources: { namespaceSelector: { matchExpressions: [{ key: cagip.io/entity, operator: Exists }] } }
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata: { name: aigw-model-egress, labels: { lcl.demo/governance: vap } }
+spec:
+  policyName: aigw-model-egress
+  validationActions: [Deny]
+  matchResources: { namespaceSelector: { matchExpressions: [{ key: cagip.io/entity, operator: Exists }] } }
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata: { name: aigw-model-scope, labels: { lcl.demo/governance: vap } }
+spec:
+  policyName: aigw-model-scope
+  validationActions: [Deny]
+  matchResources: { namespaceSelector: { matchExpressions: [{ key: cagip.io/entity, operator: Exists }] } }
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata: { name: aigw-mcp-servers, labels: { lcl.demo/governance: vap } }
+spec:
+  policyName: aigw-mcp-servers
+  validationActions: [Deny]
+  matchResources: { namespaceSelector: { matchExpressions: [{ key: cagip.io/entity, operator: Exists }] } }
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata: { name: aigw-token-cap, labels: { lcl.demo/governance: vap } }
+spec:
+  policyName: aigw-token-cap
+  validationActions: [Deny]
+  matchResources: { namespaceSelector: { matchExpressions: [{ key: cagip.io/entity, operator: Exists }] } }
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata: { name: aigw-consumergroup-scope, labels: { lcl.demo/governance: vap } }
+spec:
+  policyName: aigw-consumergroup-scope
+  validationActions: [Deny]
+  matchResources: { namespaceSelector: { matchExpressions: [{ key: cagip.io/entity, operator: Exists }] } }
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata: { name: aigw-dataplane-scaling-only, labels: { lcl.demo/governance: vap } }
+spec:
+  policyName: aigw-dataplane-scaling-only
+  validationActions: [Deny]
+  matchResources: { namespaceSelector: { matchExpressions: [{ key: cagip.io/entity, operator: Exists }] } }
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata: { name: aigw-model-providers, labels: { lcl.demo/governance: vap } }
+spec:
+  policyName: aigw-model-providers
+  validationActions: [Deny]
+  matchResources: { namespaceSelector: { matchExpressions: [{ key: cagip.io/entity, operator: Exists }] } }
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata: { name: aigw-entity-secrets, labels: { lcl.demo/governance: vap } }
+spec:
+  policyName: aigw-entity-secrets
+  validationActions: [Deny]
+  matchResources: { namespaceSelector: { matchExpressions: [{ key: cagip.io/entity, operator: Exists }] } }

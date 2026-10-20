@@ -1,0 +1,85 @@
+# CAGIP platform, per entity: the entity's own AI Gateway. KO runs one in-process control plane
+# per OnPremAIGateway and pushes the DB-less config rendered from every AI entity of this
+# namespace to this DataPlane only. One gateway per entity namespace = the namespace is the
+# tenancy boundary again (on-prem KO rejects cross-namespace entities and secretRefs).
+apiVersion: aigateway.konghq.com/v1alpha1
+kind: OnPremAIGateway
+metadata: { name: caas-aigw, namespace: caas, labels: { cagip.io/owner: platform, cagip.io/stream: core } }
+spec:
+  # Every change re-renders and re-pushes the whole config to every DataPlane.
+  dataplaneSync: { intervalSeconds: 10, timeoutSeconds: 10 }
+  # No objectFilters on konghq.com/secret: KO already watches only Secrets with that label, and
+  # repeating it is rejected (OptionsInvalid "conflicts with operator's secret label filter").
+---
+apiVersion: aigateway.konghq.com/v1alpha1
+kind: AIGatewayDataPlane
+metadata: { name: caas-aigw-dp, namespace: caas, labels: { cagip.io/owner: platform, cagip.io/stream: core } }
+spec:
+  controlPlaneRef:
+    type: onpremNamespacedRef
+    onpremNamespacedRef: { name: caas-aigw }
+  deployment:
+    replicas: 1
+    podTemplateSpec:
+      metadata:
+        labels: { lcl.demo/role: aigw-dataplane, cagip.io/entity: caas }   # scraped by the metrics agent
+      spec:
+        containers:
+          - name: aigw
+            image: kong/kong-ai-gateway:2.2.0
+            env:
+              - { name: KONG_ANONYMOUS_REPORTS, value: "off" }
+              # One worker per VM CPU (12) does not fit 2Gi with the AI GW image: OOMKilled.
+              - { name: KONG_NGINX_WORKER_PROCESSES, value: "2" }
+              - { name: KONG_UNTRUSTED_LUA, value: strict }
+              - { name: KONG_TRACING_INSTRUMENTATIONS, value: all }
+              - { name: KONG_TRACING_SAMPLING_RATE, value: "1.0" }
+              # Trust the marina CA for mock-vertex (the "PSC" endpoint), on top of the system bundle.
+              - { name: KONG_LUA_SSL_TRUSTED_CERTIFICATE, value: "system,/etc/marina/ca.crt" }
+              # CAGIP backend credential (shared pgvector), referenced as {vault://env/aigw-pgvector-password}.
+              - name: AIGW_PGVECTOR_PASSWORD
+                valueFrom: { secretKeyRef: { name: aigw-backend-creds, key: pgvector } }
+              # The entity's own key for plugin fields that cannot take a secretRef (embeddings auth in
+              # semantic policies), referenced as {vault://env/entity-openai-bearer}. Written by the
+              # entity's pipeline (Secret caas-llm-keys, write-only for the entity); optional, so
+              # the DataPlane starts before the entity has pushed any key.
+              - name: ENTITY_OPENAI_BEARER
+                valueFrom: { secretKeyRef: { name: caas-llm-keys, key: openai-bearer, optional: true } }
+            volumeMounts:
+              - { name: marina-ca, mountPath: /etc/marina, readOnly: true }
+            resources:
+              requests: { cpu: 200m, memory: 512Mi }
+              limits: { cpu: "2", memory: 3Gi }
+        volumes:
+          - { name: marina-ca, configMap: { name: marina-root-ca } }
+  network:
+    services:
+      ingress:
+        type: LoadBalancer
+        annotations:
+          external-dns.kubernetes.io/hostname: ai-caas.lclv2.demo.internal
+        ports:
+          - { name: https, port: 443, targetPort: 8443 }
+---
+# The fleet wildcard (*.lclv2.demo.internal) served for ai-caas.lclv2.demo.internal. fleet_tls labels the Secret
+# konghq.com/secret=true so the OnPremAIGateway instance watches it.
+apiVersion: aiconfiguration.konghq.com/v1alpha1
+kind: AIGatewayCertificate
+metadata: { name: cagip-fleet-wildcard, namespace: caas, labels: { cagip.io/owner: platform, cagip.io/stream: core } }
+spec:
+  aiGatewayRef: { group: aigateway.konghq.com, kind: OnPremAIGateway, namespacedRef: { name: caas-aigw } }
+  apiSpec:
+    name: cagip-fleet-wildcard
+    cert: { type: secretRef, secretRef: { name: marina-fleet-wildcard-tls, key: tls.crt } }
+    key: { type: secretRef, secretRef: { name: marina-fleet-wildcard-tls, key: tls.key } }
+---
+apiVersion: aiconfiguration.konghq.com/v1alpha1
+kind: AIGatewaySNI
+metadata: { name: cagip-ai-host, namespace: caas, labels: { cagip.io/owner: platform, cagip.io/stream: core } }
+spec:
+  aiGatewayRef: { group: aigateway.konghq.com, kind: OnPremAIGateway, namespacedRef: { name: caas-aigw } }
+  apiSpec:
+    name: cagip-ai-host
+    displayName: ai-caas.lclv2.demo.internal
+    hostname: ai-caas.lclv2.demo.internal
+    certificate: { name: cagip-fleet-wildcard }

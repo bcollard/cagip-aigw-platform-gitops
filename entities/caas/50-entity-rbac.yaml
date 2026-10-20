@@ -1,0 +1,25 @@
+# Entity personas, bound inside the entity namespace only. Applied per entity by
+# bin/onboard-entity.sh with ENTITY / NS_ENTITY. The ClusterRoles are in 10-rbac.yaml.
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: caas-gitops, namespace: caas, labels: { lcl.demo/governance: rbac } }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: entity-platform-ops, namespace: caas, labels: { lcl.demo/governance: rbac } }
+subjects:
+  - { kind: Group, name: caas-platform-ops, apiGroup: rbac.authorization.k8s.io }
+  - { kind: ServiceAccount, name: caas-gitops, namespace: caas }   # the entity's own pipeline
+roleRef: { kind: ClusterRole, name: entity-platform-ops, apiGroup: rbac.authorization.k8s.io }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: entity-developer, namespace: caas, labels: { lcl.demo/governance: rbac } }
+subjects: [{ kind: Group, name: caas-developers, apiGroup: rbac.authorization.k8s.io }]
+roleRef: { kind: ClusterRole, name: entity-developer, apiGroup: rbac.authorization.k8s.io }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: entity-viewer, namespace: caas, labels: { lcl.demo/governance: rbac } }
+subjects: [{ kind: Group, name: caas-viewers, apiGroup: rbac.authorization.k8s.io }]
+roleRef: { kind: ClusterRole, name: entity-viewer, apiGroup: rbac.authorization.k8s.io }
