@@ -11,7 +11,7 @@ rules and what keeps the platform working.
 | Path | What |
 |---|---|
 | `chart/` | the `cagip-aigw-platform` chart, one release per entity cluster |
-| `chart/charts/kong-operator-*.tgz` | Kong Operator chart, vendored from the nightly's commit (its AI CRDs are ahead of the published chart) |
+| `chart/charts/kong-operator-*.tgz` | Kong Operator chart, vendored from the nightly's commit (its AI CRDs are ahead of the published chart), without its `gwapi-experimental-crds` subchart: Helm renders a subchart's `crds/` even when the subchart is disabled, and the Gateway API `safe-upgrades` VAP then rejects every resync |
 | `clusters/<entity>.yaml` | one values file per entity cluster: host name, sizing, observability endpoints |
 
 ## What the chart installs
