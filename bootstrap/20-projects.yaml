@@ -1,0 +1,30 @@
+# One AppProject per persona: the first gate (which repo, which namespace, which kinds, as whom).
+# RBAC and the VAPs from the platform chart are the second and third.
+#   envsubst '${PLATFORM_REPO_URL} ${ENTITY_REPO_URL}' < 20-projects.yaml | kubectl apply -f -
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata: { name: cagip-platform, namespace: argocd }
+spec:
+  description: CAGIP AI Gateway platform — Kong Operator, licence, AI Gateway, global policies, governance
+  sourceRepos: [${PLATFORM_REPO_URL}]
+  destinations: [{ server: https://kubernetes.default.svc, namespace: "*" }]
+  clusterResourceWhitelist: [{ group: "*", kind: "*" }]
+  destinationServiceAccounts:
+    - { server: https://kubernetes.default.svc, namespace: "*", defaultServiceAccount: "argocd:platform-deployer" }
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata: { name: lcl-ai, namespace: argocd }
+spec:
+  description: LCL — AI providers, Models, AI policies, consumer groups, MCP servers
+  sourceRepos: [${ENTITY_REPO_URL}]
+  destinations: [{ server: https://kubernetes.default.svc, namespace: ai-gateway }]
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist:
+    - { group: aiconfiguration.konghq.com, kind: AIGatewayModelProvider }
+    - { group: aiconfiguration.konghq.com, kind: AIGatewayModel }
+    - { group: aiconfiguration.konghq.com, kind: AIGatewayPolicy }
+    - { group: aiconfiguration.konghq.com, kind: AIGatewayConsumerGroup }
+    - { group: aiconfiguration.konghq.com, kind: AIGatewayMCPServer }
+  destinationServiceAccounts:
+    - { server: https://kubernetes.default.svc, namespace: ai-gateway, defaultServiceAccount: "argocd:entity-deployer" }

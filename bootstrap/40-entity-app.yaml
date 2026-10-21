@@ -1,0 +1,16 @@
+# LCL's chart, synced as argocd/entity-deployer into namespace ai-gateway.
+#   envsubst '${ENTITY_REPO_URL}' < 40-entity-app.yaml | kubectl apply -f -
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata: { name: lcl-aigw, namespace: argocd }
+spec:
+  project: lcl-ai
+  source:
+    repoURL: ${ENTITY_REPO_URL}
+    targetRevision: main
+    path: chart
+    helm: { releaseName: lcl-aigw }
+  destination: { server: https://kubernetes.default.svc, namespace: ai-gateway }
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    retry: { limit: 10, backoff: { duration: 10s, factor: 2, maxDuration: 3m } }

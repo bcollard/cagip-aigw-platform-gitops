@@ -1,0 +1,11 @@
+# Argo CD Helm values (argo/argo-cd). The one setting the governance model needs is sync
+# impersonation: every Application then syncs as its AppProject's ServiceAccount, so Kubernetes
+# RBAC and the ValidatingAdmissionPolicies judge Argo CD's writes.
+configs:
+  cm:
+    application.sync.impersonation.enabled: "true"
+    timeout.reconciliation: 60s
+# Lab only: no Dex, notifications or ApplicationSet. Keep your own settings for these.
+dex: { enabled: false }
+notifications: { enabled: false }
+applicationSet: { enabled: false }

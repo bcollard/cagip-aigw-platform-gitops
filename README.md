@@ -13,6 +13,7 @@ rules and what keeps the platform working.
 | `chart/` | the `cagip-aigw-platform` chart, one release per entity cluster |
 | `chart/charts/kong-operator-*.tgz` | Kong Operator chart, vendored from the nightly's commit (its AI CRDs are ahead of the published chart), without its `gwapi-experimental-crds` subchart: Helm renders a subchart's `crds/` even when the subchart is disabled, and the Gateway API `safe-upgrades` VAP then rejects every resync |
 | `clusters/<entity>.yaml` | one values file per entity cluster: host name, sizing, observability endpoints |
+| `bootstrap/` | cluster bootstrap, applied once by the cluster admin: Argo CD values (sync impersonation), the two deployer ServiceAccounts, the two AppProjects, the two Applications. Placeholders are filled with `envsubst` at install time |
 
 ## What the chart installs
 
@@ -54,3 +55,17 @@ controllers and the break-glass groups (`governance.breakGlassGroups`: `system:m
 
 Not in Git, created out of band: the gateway's TLS Secret, the entity's `entity-credentials`
 Secret. The licence is an Application parameter.
+
+## Bootstrap a cluster
+
+```bash
+export PLATFORM_REPO_URL=https://github.com/<you>/cagip-aigw-platform-gitops.git
+export ENTITY_REPO_URL=https://github.com/<you>/cagip-aigw-lcl-gitops.git
+helm upgrade --install argocd argo/argo-cd -n argocd --create-namespace -f bootstrap/argocd-values.yaml
+kubectl apply -f bootstrap/10-deployers.yaml
+envsubst '$PLATFORM_REPO_URL $ENTITY_REPO_URL' < bootstrap/20-projects.yaml | kubectl apply -f -
+KONG_LICENSE_RAW="$(jq -c . license.json)" envsubst '$PLATFORM_REPO_URL $KONG_LICENSE_RAW' \
+  < bootstrap/30-platform-app.yaml | kubectl apply -f -
+# after the entity has created its entity-credentials Secret:
+envsubst '$ENTITY_REPO_URL' < bootstrap/40-entity-app.yaml | kubectl apply -f -
+```

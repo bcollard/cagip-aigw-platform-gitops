@@ -1,0 +1,25 @@
+# The platform chart on this cluster, with this cluster's values (clusters/lcl.yaml, same repo).
+# The licence is a deploy-time value: it lives in this Application object, never in Git.
+#   export KONG_LICENSE_RAW="$(jq -c . license.json)"
+#   envsubst '${PLATFORM_REPO_URL} ${KONG_LICENSE_RAW}' < 30-platform-app.yaml | kubectl apply -f -
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata: { name: cagip-aigw-platform, namespace: argocd }
+spec:
+  project: cagip-platform
+  source:
+    repoURL: ${PLATFORM_REPO_URL}
+    targetRevision: main
+    path: chart
+    helm:
+      releaseName: cagip-aigw-platform
+      valueFiles: [../clusters/lcl.yaml]
+      # valuesObject, not parameters: Argo CD passes parameters to helm --set-string, which
+      # splits the licence JSON on its commas.
+      valuesObject:
+        license: { raw: '${KONG_LICENSE_RAW}' }
+  destination: { server: https://kubernetes.default.svc, namespace: kong-system }
+  syncPolicy:
+    automated: { prune: false, selfHeal: true }   # platform deletions are deliberate
+    syncOptions: [CreateNamespace=true, ServerSideApply=true]   # SSA: the CRDs exceed the client-side annotation limit
+    retry: { limit: 10, backoff: { duration: 10s, factor: 2, maxDuration: 3m } }
