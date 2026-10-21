@@ -105,7 +105,7 @@ kong-operator:
   fullnameOverride: kong-operator
   image:
     repository: kong/nightly-kong-operator
-    tag: "20261020"
+    tag: "20261021"
     effectiveSemver: "2.4.0"   # the nightly tag is not semver
   env:
     enable_controller_aigatewaydataplane: true   # AI GW 2.x controllers are opt-in
