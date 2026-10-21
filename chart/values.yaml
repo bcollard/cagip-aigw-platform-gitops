@@ -68,6 +68,9 @@ mandatoryPolicies:
 governance:
   platformServiceAccount: { namespace: argocd, name: platform-deployer }
   entityServiceAccount: { namespace: argocd, name: entity-deployer }
+  # Groups exempt from the VAPs (break-glass). kubeadm ≥ 1.29 puts its admin.conf user in
+  # kubeadm:cluster-admins, not system:masters: list the group the cluster's admins really have.
+  breakGlassGroups: [system:masters]
   # The entity's keys, created out of band (labelled konghq.com/secret=true). Providers reference
   # it through secretRef; its keys are also exposed to the DataPlane as ENTITY_<KEY> env vars,
   # so policies read them as {vault://env/entity-<key>} (OPENAI_BEARER → entity-openai-bearer).

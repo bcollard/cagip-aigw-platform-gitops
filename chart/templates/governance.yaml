@@ -1,7 +1,7 @@
 # ValidatingAdmissionPolicies on the entity's AI configuration. Scope:
 #   - namespace {{ .Values.gateway.namespace }} only (bindings);
 #   - every identity except the platform's (matchCondition not-platform): the platform deployer,
-#     Kong Operator, kube-system controllers, system:masters (break-glass).
+#     Kong Operator, kube-system controllers, governance.breakGlassGroups (break-glass).
 # The entity's AI team owns its providers, models, MCP upstreams and token budgets: no allowlist
 # of vendors, hosts or caps here. These rules keep the platform working and apply group rules:
 # central auth, mandatory policies, credentials by reference, reserved policy types, and the

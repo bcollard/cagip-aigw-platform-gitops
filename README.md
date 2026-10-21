@@ -49,7 +49,8 @@ gets only what this chart grants:
 | `aigw-token-cap` | usage plans count correctly: Redis counters and a total budget |
 
 The VAPs apply to every identity except the platform deployer, Kong Operator, kube-system
-controllers and `system:masters`.
+controllers and the break-glass groups (`governance.breakGlassGroups`: `system:masters`, plus
+`kubeadm:cluster-admins` on kubeadm clusters, whose admin user is not in `system:masters`).
 
 Not in Git, created out of band: the gateway's TLS Secret, the entity's `entity-credentials`
 Secret. The licence is an Application parameter.

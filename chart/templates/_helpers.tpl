@@ -22,7 +22,7 @@ annotations:
     !(request.userInfo.username == 'system:serviceaccount:{{ .Values.governance.platformServiceAccount.namespace }}:{{ .Values.governance.platformServiceAccount.name }}' ||
       request.userInfo.username.startsWith('system:serviceaccount:{{ .Release.Namespace }}:') ||
       request.userInfo.username.startsWith('system:serviceaccount:kube-system:') ||
-      'system:masters' in request.userInfo.groups)
+      request.userInfo.groups.exists(g, g in {{ include "cagip.cel" .Values.governance.breakGlassGroups }}))
 {{- end }}
 
 {{/* A ValidatingAdmissionPolicyBinding scoped to the gateway namespace. */}}
