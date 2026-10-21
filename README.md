@@ -14,6 +14,7 @@ rules and what keeps the platform working.
 | `chart/charts/kong-operator-*.tgz` | Kong Operator chart, vendored from the nightly's commit (its AI CRDs are ahead of the published chart), without its `gwapi-experimental-crds` subchart: Helm renders a subchart's `crds/` even when the subchart is disabled, and the Gateway API `safe-upgrades` VAP then rejects every resync |
 | `clusters/<entity>.yaml` | one values file per entity cluster: host name, sizing, observability endpoints |
 | `bootstrap/` | cluster bootstrap, applied once by the cluster admin: Argo CD values (sync impersonation), the two deployer ServiceAccounts, the two AppProjects, the two Applications. Placeholders are filled with `envsubst` at install time |
+| `observability/` | Prometheus scrape job for the DataPlane pods (label `entity`), Elasticsearch pipeline and index template for the request logs, Grafana Elasticsearch data source, Grafana dashboard `lcl-aigw-v2` (usage by entity, consumer group, employee) |
 
 ## What the chart installs
 

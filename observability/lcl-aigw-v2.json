@@ -1,0 +1,883 @@
+{
+  "title": "Kong AI Gateway v2 \u2014 usage by entity, group and employee",
+  "uid": "lcl-aigw-v2",
+  "tags": [
+    "kong",
+    "ai-gateway",
+    "llm"
+  ],
+  "timezone": "browser",
+  "editable": true,
+  "schemaVersion": 39,
+  "refresh": "30s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "entity",
+        "label": "Entity (BU)",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(kong_ai_llm_requests_total, entity)",
+          "refId": "entity"
+        },
+        "definition": "label_values(kong_ai_llm_requests_total, entity)",
+        "includeAll": true,
+        "multi": true,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "refresh": 2
+      },
+      {
+        "name": "provider",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "includeAll": true,
+        "multi": true,
+        "query": "label_values(kong_ai_llm_requests_total, ai_provider)",
+        "refresh": 2
+      },
+      {
+        "name": "model",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "includeAll": true,
+        "multi": true,
+        "query": "label_values(kong_ai_llm_requests_total, ai_model)",
+        "refresh": 2
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Traffic",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "LLM requests/s by provider",
+      "datasource": "Prometheus",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": "Prometheus",
+          "legendFormat": "{{ai_provider}}",
+          "expr": "sum by (ai_provider) (rate(kong_ai_llm_requests_total{ai_provider=~\"$provider\",ai_model=~\"$model\",entity=~\"$entity\"}[5m]))"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "LLM requests/s by model",
+      "datasource": "Prometheus",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": "Prometheus",
+          "legendFormat": "{{ai_provider}}/{{ai_model}}",
+          "expr": "sum by (ai_provider,ai_model) (rate(kong_ai_llm_requests_total{ai_provider=~\"$provider\",ai_model=~\"$model\",entity=~\"$entity\"}[5m]))"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Tokens",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 9
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Tokens/s by type",
+      "datasource": "Prometheus",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 10
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": "Prometheus",
+          "legendFormat": "{{token_type}}",
+          "expr": "sum by (token_type) (rate(kong_ai_llm_tokens_total{ai_provider=~\"$provider\",ai_model=~\"$model\",entity=~\"$entity\"}[5m]))"
+        }
+      ]
+    },
+    {
+      "type": "piechart",
+      "title": "Total tokens by model (share of spend proxy)",
+      "datasource": "Prometheus",
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 10
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": "Prometheus",
+          "legendFormat": "{{ai_provider}}/{{ai_model}}",
+          "expr": "sum by (ai_provider,ai_model) (kong_ai_llm_tokens_total{token_type=\"total_tokens\",ai_provider=~\"$provider\",ai_model=~\"$model\",entity=~\"$entity\"})"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Total tokens (range)",
+      "datasource": "Prometheus",
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 10
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": "Prometheus",
+          "expr": "sum(increase(kong_ai_llm_tokens_total{token_type=\"total_tokens\",ai_provider=~\"$provider\",ai_model=~\"$model\",entity=~\"$entity\"}[$__range]))"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Cost",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 18
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Spend rate ($/hour) by model",
+      "datasource": "Prometheus",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 19
+      },
+      "description": "Requires input_cost/output_cost (dollars per 1M tokens) on the AI target. Kong computes cost = (prompt*input_cost + completion*output_cost)/1e6.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 4
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": "Prometheus",
+          "legendFormat": "{{ai_provider}}/{{ai_model}}",
+          "expr": "sum by (ai_provider,ai_model) (rate(kong_ai_llm_cost_total{ai_provider=~\"$provider\",ai_model=~\"$model\",entity=~\"$entity\"}[5m])) * 3600"
+        }
+      ]
+    },
+    {
+      "type": "piechart",
+      "title": "Cost share by model",
+      "datasource": "Prometheus",
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 19
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 5
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": "Prometheus",
+          "legendFormat": "{{ai_provider}}/{{ai_model}}",
+          "expr": "sum by (ai_provider,ai_model) (increase(kong_ai_llm_cost_total{ai_provider=~\"$provider\",ai_model=~\"$model\",entity=~\"$entity\"}[$__range]))"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Total spend (range)",
+      "datasource": "Prometheus",
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 19
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 5
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": "Prometheus",
+          "expr": "sum(increase(kong_ai_llm_cost_total{ai_provider=~\"$provider\",ai_model=~\"$model\",entity=~\"$entity\"}[$__range]))"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Latency",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 27
+      }
+    },
+    {
+      "comment": "The AI latency histograms are ms-valued. Use _sum/_count for a mean rather than histogram_quantile, whose buckets are coarse (1s..60s) and blind below 1s.",
+      "type": "timeseries",
+      "title": "Mean provider latency (ms) \u2014 _sum/_count",
+      "datasource": "Prometheus",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 28
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": "Prometheus",
+          "legendFormat": "{{ai_provider}}/{{ai_model}}",
+          "expr": "sum by (ai_provider,ai_model) (rate(kong_ai_llm_provider_latency_ms_sum{ai_provider=~\"$provider\",ai_model=~\"$model\",entity=~\"$entity\"}[5m])) / sum by (ai_provider,ai_model) (rate(kong_ai_llm_provider_latency_ms_count{ai_provider=~\"$provider\",ai_model=~\"$model\",entity=~\"$entity\"}[5m]))"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Mean time to first token (ms)",
+      "datasource": "Prometheus",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 28
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": "Prometheus",
+          "legendFormat": "{{ai_provider}}/{{ai_model}}",
+          "expr": "sum by (ai_provider,ai_model) (rate(kong_ai_llm_ttft_latency_ms_sum{ai_provider=~\"$provider\",ai_model=~\"$model\",entity=~\"$entity\"}[5m])) / sum by (ai_provider,ai_model) (rate(kong_ai_llm_ttft_latency_ms_count{ai_provider=~\"$provider\",ai_model=~\"$model\",entity=~\"$entity\"}[5m]))"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Mean time per output token (ms)",
+      "datasource": "Prometheus",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 28
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": "Prometheus",
+          "legendFormat": "{{ai_provider}}/{{ai_model}}",
+          "expr": "sum by (ai_provider,ai_model) (rate(kong_ai_llm_tpot_latency_ms_sum{ai_provider=~\"$provider\",ai_model=~\"$model\",entity=~\"$entity\"}[5m])) / sum by (ai_provider,ai_model) (rate(kong_ai_llm_tpot_latency_ms_count{ai_provider=~\"$provider\",ai_model=~\"$model\",entity=~\"$entity\"}[5m]))"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Data plane health",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 36
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "HTTP status on the AI route",
+      "datasource": "Prometheus",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 16,
+        "y": 37
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": "Prometheus",
+          "legendFormat": "{{code}}",
+          "expr": "sum by (code) (rate(kong_http_requests_total[5m]))"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Usage by entity (BU) \u2014 Prometheus, label entity",
+      "id": 1,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 43
+      }
+    },
+    {
+      "type": "bargauge",
+      "title": "Tokens by entity (range)",
+      "id": 2,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 44
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (entity) (increase(kong_ai_llm_tokens_total{token_type=\"total_tokens\",entity=~\"$entity\"}[$__range]))",
+          "legendFormat": "{{entity}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    },
+    {
+      "type": "bargauge",
+      "title": "Cost by entity (range)",
+      "id": 3,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 44
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (entity) (increase(kong_ai_llm_cost_total{entity=~\"$entity\"}[$__range]))",
+          "legendFormat": "{{entity}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Tokens/s by entity and model",
+      "id": 4,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 44
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (entity, ai_model) (rate(kong_ai_llm_tokens_total{token_type=\"total_tokens\",entity=~\"$entity\"}[5m]))",
+          "legendFormat": "{{entity}} \u00b7 {{ai_model}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    },
+    {
+      "type": "row",
+      "title": "Usage by consumer group \u2014 request logs (aigw_team = ADFS group)",
+      "id": 5,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 52
+      }
+    },
+    {
+      "type": "barchart",
+      "title": "Tokens by consumer group",
+      "id": 6,
+      "datasource": {
+        "type": "elasticsearch",
+        "uid": "es-kong-ai"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 0,
+        "y": 53
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "elasticsearch",
+            "uid": "es-kong-ai"
+          },
+          "query": "aigw_entity:${entity:lucene} AND _exists_:ai.proxy.usage",
+          "timeField": "@timestamp",
+          "metrics": [
+            {
+              "id": "1",
+              "type": "sum",
+              "field": "ai.proxy.usage.total_tokens"
+            }
+          ],
+          "bucketAggs": [
+            {
+              "id": "2",
+              "type": "terms",
+              "field": "aigw_team.keyword",
+              "settings": {
+                "size": "10",
+                "order": "desc",
+                "orderBy": "1",
+                "min_doc_count": "1"
+              }
+            }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "xField": "aigw_team.keyword",
+        "showValue": "auto",
+        "legend": {
+          "showLegend": false
+        }
+      }
+    },
+    {
+      "type": "table",
+      "title": "Consumer groups: tokens, cost, requests",
+      "id": 7,
+      "datasource": {
+        "type": "elasticsearch",
+        "uid": "es-kong-ai"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 8,
+        "y": 53
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "elasticsearch",
+            "uid": "es-kong-ai"
+          },
+          "query": "aigw_entity:${entity:lucene} AND _exists_:ai.proxy.usage",
+          "timeField": "@timestamp",
+          "metrics": [
+            {
+              "id": "1",
+              "type": "sum",
+              "field": "ai.proxy.usage.total_tokens"
+            },
+            {
+              "id": "4",
+              "type": "sum",
+              "field": "ai.proxy.usage.cost"
+            },
+            {
+              "id": "5",
+              "type": "count"
+            }
+          ],
+          "bucketAggs": [
+            {
+              "id": "2",
+              "type": "terms",
+              "field": "aigw_team.keyword",
+              "settings": {
+                "size": "20",
+                "order": "desc",
+                "orderBy": "1",
+                "min_doc_count": "1"
+              }
+            }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "Sum ai.proxy.usage.total_tokens",
+            "desc": true
+          }
+        ]
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "renameByName": {
+              "aigw_team.keyword": "consumer group",
+              "aigw_user.keyword": "employee",
+              "Sum ai.proxy.usage.total_tokens": "tokens",
+              "Sum ai.proxy.usage.cost": "cost ($)",
+              "Count": "requests"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Tokens over time by consumer group",
+      "id": 8,
+      "datasource": {
+        "type": "elasticsearch",
+        "uid": "es-kong-ai"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 16,
+        "y": 53
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "elasticsearch",
+            "uid": "es-kong-ai"
+          },
+          "query": "aigw_entity:${entity:lucene} AND _exists_:ai.proxy.usage",
+          "timeField": "@timestamp",
+          "metrics": [
+            {
+              "id": "1",
+              "type": "sum",
+              "field": "ai.proxy.usage.total_tokens"
+            }
+          ],
+          "bucketAggs": [
+            {
+              "id": "2",
+              "type": "terms",
+              "field": "aigw_team.keyword",
+              "settings": {
+                "size": "10",
+                "order": "desc",
+                "orderBy": "1",
+                "min_doc_count": "1"
+              }
+            },
+            {
+              "id": "3",
+              "type": "date_histogram",
+              "field": "@timestamp",
+              "settings": {
+                "interval": "auto"
+              }
+            }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "type": "row",
+      "title": "Usage by employee \u2014 request logs (aigw_user = token credential claim)",
+      "id": 9,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 62
+      }
+    },
+    {
+      "type": "table",
+      "title": "Top employees: tokens, cost, requests",
+      "id": 10,
+      "datasource": {
+        "type": "elasticsearch",
+        "uid": "es-kong-ai"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 0,
+        "y": 63
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "elasticsearch",
+            "uid": "es-kong-ai"
+          },
+          "query": "aigw_entity:${entity:lucene} AND _exists_:ai.proxy.usage",
+          "timeField": "@timestamp",
+          "metrics": [
+            {
+              "id": "1",
+              "type": "sum",
+              "field": "ai.proxy.usage.total_tokens"
+            },
+            {
+              "id": "4",
+              "type": "sum",
+              "field": "ai.proxy.usage.cost"
+            },
+            {
+              "id": "5",
+              "type": "count"
+            }
+          ],
+          "bucketAggs": [
+            {
+              "id": "2",
+              "type": "terms",
+              "field": "aigw_user.keyword",
+              "settings": {
+                "size": "25",
+                "order": "desc",
+                "orderBy": "1",
+                "min_doc_count": "1"
+              }
+            }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "Sum ai.proxy.usage.total_tokens",
+            "desc": true
+          }
+        ]
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "renameByName": {
+              "aigw_team.keyword": "consumer group",
+              "aigw_user.keyword": "employee",
+              "Sum ai.proxy.usage.total_tokens": "tokens",
+              "Sum ai.proxy.usage.cost": "cost ($)",
+              "Count": "requests"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Tokens over time, top 5 employees",
+      "id": 11,
+      "datasource": {
+        "type": "elasticsearch",
+        "uid": "es-kong-ai"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 63
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "elasticsearch",
+            "uid": "es-kong-ai"
+          },
+          "query": "aigw_entity:${entity:lucene} AND _exists_:ai.proxy.usage",
+          "timeField": "@timestamp",
+          "metrics": [
+            {
+              "id": "1",
+              "type": "sum",
+              "field": "ai.proxy.usage.total_tokens"
+            }
+          ],
+          "bucketAggs": [
+            {
+              "id": "2",
+              "type": "terms",
+              "field": "aigw_user.keyword",
+              "settings": {
+                "size": "5",
+                "order": "desc",
+                "orderBy": "1",
+                "min_doc_count": "1"
+              }
+            },
+            {
+              "id": "3",
+              "type": "date_histogram",
+              "field": "@timestamp",
+              "settings": {
+                "interval": "auto"
+              }
+            }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {}
+    }
+  ]
+}

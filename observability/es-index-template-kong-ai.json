@@ -1,0 +1,11 @@
+{
+  "index_patterns": ["kong-ai*"],
+  "template": {
+    "settings": { "index.default_pipeline": "kong-ai-ts" },
+    "mappings": {
+      "dynamic": true,
+      "properties": { "@timestamp": { "type": "date" } },
+      "dynamic_templates": [ { "cost_double": { "match": "*cost", "mapping": { "type": "double" } } } ]
+    }
+  }
+}

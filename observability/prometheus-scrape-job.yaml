@@ -1,0 +1,13 @@
+# Prometheus scrape job for the AI Gateway DataPlane pods (status port 8100, /metrics).
+# Scrape each pod, not the Service: through one Service each scrape samples a random replica and
+# the counters jump between pods. The entity label comes from the pod label cagip.io/entity, which
+# the platform chart sets from entity.name. The dashboard filters on it.
+# Add under scrape_configs (Prometheus), or as an additionalScrapeConfigs entry (kube-prometheus-stack).
+- job_name: kong-aigw
+  scrape_interval: 15s
+  kubernetes_sd_configs: [{ role: pod, namespaces: { names: [ai-gateway] } }]
+  relabel_configs:
+    - { source_labels: [__meta_kubernetes_pod_label_cagip_io_entity], regex: ".+", action: keep }
+    - { source_labels: [__meta_kubernetes_pod_ip], regex: "(.+)", target_label: __address__, replacement: "${1}:8100" }
+    - { source_labels: [__meta_kubernetes_pod_name], target_label: pod }
+    - { source_labels: [__meta_kubernetes_pod_label_cagip_io_entity], target_label: entity }

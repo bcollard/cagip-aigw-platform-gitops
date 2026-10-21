@@ -1,0 +1,1 @@
+{ "processors": [ { "date": { "field": "started_at", "formats": ["UNIX_MS"], "target_field": "@timestamp", "ignore_failure": true } } ] }

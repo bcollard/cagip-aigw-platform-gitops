@@ -1,0 +1,17 @@
+# Grafana data source on the request logs (index kong-ai*, written by the global policy
+# cagip-http-log). The dashboard's consumer-group and employee panels use uid es-kong-ai.
+# As a provisioning ConfigMap for the Grafana sidecar (label grafana_datasource: "1"), or copy the
+# datasources entry into your provisioning files. Set url to your Elasticsearch.
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: grafana-ds-kong-ai, labels: { grafana_datasource: "1" } }
+data:
+  kong-ai.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Elasticsearch kong-ai
+        uid: es-kong-ai
+        type: elasticsearch
+        access: proxy
+        url: http://elasticsearch.observability.svc:9200
+        jsonData: { index: "kong-ai*", timeField: "@timestamp", maxConcurrentShardRequests: 5 }
