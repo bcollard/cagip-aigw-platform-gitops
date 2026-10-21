@@ -12,7 +12,9 @@ gateway:
   namespace: ai-gateway    # the gateway and every AI entity (KO on-prem: one namespace)
   name: aigw               # OnPremAIGateway; the DataPlane is <name>-dp
   hostname: ""             # served on https://<hostname>
-  image: kong/kong-ai-gateway:2.2.0
+  # aigw-master dev build (Kong/kong-ee@8133b39, KONG_VERSION 2.2.1, built 2026-10-21), pinned by
+  # digest: ai-prompt-template renders before ai-prompt-guard. Release image: kong/kong-ai-gateway:2.2.0.
+  image: kong/kong-ai-gateway-dev@sha256:bd87eeb5a18eddd0cf22068c0067cb62d85355c28241278f6760759b65babace
   replicas: 2
   workerProcesses: 2       # nginx workers per pod; one per node CPU does not fit 3Gi
   resources:
