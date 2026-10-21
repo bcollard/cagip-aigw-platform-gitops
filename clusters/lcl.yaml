@@ -17,6 +17,7 @@ gateway:
 auth:
   displayName: CAGIP ADFS (Keycloak in the lab)
   issuer: https://keycloak.kong.runlocal.dev/realms/lcl-aigw
+  userClaim: preferred_username   # ADFS: upn. The per-employee credential: usage plans match it by name
 
 observability:
   otel: { enabled: true, endpoint: "http://otel.lclv2.demo.internal:4318" }
