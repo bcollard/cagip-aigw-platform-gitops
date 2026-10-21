@@ -2,8 +2,10 @@
 #   - namespace {{ .Values.gateway.namespace }} only (bindings);
 #   - every identity except the platform's (matchCondition not-platform): the platform deployer,
 #     Kong Operator, kube-system controllers, system:masters (break-glass).
-# Parameters come from .Values.governance, rendered into the CEL: changing a limit is a commit to
-# this chart's values, synced by the platform Application.
+# The entity's AI team owns its providers, models, MCP upstreams and token budgets: no allowlist
+# of vendors, hosts or caps here. These rules keep the platform working and apply group rules:
+# central auth, mandatory policies, credentials by reference, reserved policy types, and the
+# group's denied LLM hosts (governance.deniedLlmHosts).
 #
 # RBAC (entity-rbac.yaml) decides WHICH kinds the entity writes; these decide WHAT they contain.
 {{- $g := .Values.governance }}
@@ -72,7 +74,7 @@ spec:
       message: "no Lua in entity policies (*_function, *_by_lua fields)"
       reason: Forbidden
 ---
-# aigw-models — what every Model carries, and where it may send traffic.
+# aigw-models — what every Model carries; no target on a host the group denies.
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata: { name: aigw-models, labels: { app.kubernetes.io/part-of: cagip-aigw-platform } }
@@ -89,7 +91,12 @@ spec:
     - name: pol
       expression: "variables.m != null && has(variables.m.policies) ? variables.m.policies.map(p, p.name) : []"
     - name: hosts
-      expression: "{{ include "cagip.cel" $g.llmHosts }}"
+      expression: >-
+        variables.m == null ? [] : variables.m.targets.map(t,
+          (has(t.config.openai) && has(t.config.openai.upstreamURL) ? [url(t.config.openai.upstreamURL).getHostname()] : []) +
+          (has(t.config.gemini) && has(t.config.gemini.upstreamURL) ? [url(t.config.gemini.upstreamURL).getHostname()] : []) +
+          (has(t.config.gemini) && has(t.config.gemini.gcpEnvironment) && has(t.config.gemini.gcpEnvironment.apiEndpoint)
+            ? [t.config.gemini.gcpEnvironment.apiEndpoint] : []))
   validations:
     - expression: "object.spec.apiSpec.type == 'model' && variables.m != null"
       message: "entity Models use type: model"
@@ -112,18 +119,12 @@ spec:
     - expression: "variables.m.targets.all(t, !has(t.allowAuthOverride) || t.allowAuthOverride != 'Enabled')"
       message: "allowAuthOverride would let a client send its own provider credentials"
       reason: Forbidden
-    - expression: >-
-        variables.m.targets.all(t,
-          (!has(t.config.openai) || !has(t.config.openai.upstreamURL) || url(t.config.openai.upstreamURL).getHostname() in variables.hosts) &&
-          (!has(t.config.gemini) || (
-            (!has(t.config.gemini.upstreamURL) || url(t.config.gemini.upstreamURL).getHostname() in variables.hosts) &&
-            (!has(t.config.gemini.gcpEnvironment) || !has(t.config.gemini.gcpEnvironment.apiEndpoint) ||
-              t.config.gemini.gcpEnvironment.apiEndpoint in variables.hosts))))
-      message: "target endpoint host not allowed (governance.llmHosts)"
+    - expression: "variables.hosts.all(hs, hs.all(h, !{{ include "cagip.denied" $g.deniedLlmHosts }}))"
+      message: "target endpoint on a host the group denies (governance.deniedLlmHosts)"
       reason: Forbidden
 ---
-# aigw-model-providers — which provider types, which endpoints, and keys only by reference to
-# the entity's credentials Secret (never inline, never another Secret of the namespace).
+# aigw-model-providers — any provider type; keys only by reference to the entity's credentials
+# Secret (never inline, never another Secret of the namespace); no GCP endpoint the group denies.
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata: { name: aigw-model-providers, labels: { app.kubernetes.io/part-of: cagip-aigw-platform } }
@@ -152,19 +153,16 @@ spec:
         ('gcp' in variables.auth && 'oauthTokenURL' in variables.auth.gcp ? [variables.auth.gcp.oauthTokenURL] : []) +
         ('gcp' in variables.auth && 'metadataURL' in variables.auth.gcp ? [variables.auth.gcp.metadataURL] : [])
   validations:
-    - expression: "object.spec.apiSpec.type in {{ include "cagip.cel" $g.providerTypes }}"
-      messageExpression: "'provider type ' + object.spec.apiSpec.type + ' not allowed (governance.providerTypes: {{ join "," $g.providerTypes }})'"
-      reason: Forbidden
     - expression: >-
         variables.values.all(v, v.type == 'secretRef' && v.secretRef.name == '{{ $g.credentialsSecret }}' &&
           (!('namespace' in v.secretRef) || v.secretRef.namespace == request.namespace))
       message: "provider credentials are secretRefs to the Secret {{ $g.credentialsSecret }}, never inline"
       reason: Forbidden
-    - expression: "variables.urls.all(u, url(u).getHostname() in {{ include "cagip.cel" $g.llmHosts }})"
-      message: "GCP token/metadata endpoint host not allowed (governance.llmHosts)"
+    - expression: "variables.urls.all(u, [url(u).getHostname()].all(h, !{{ include "cagip.denied" $g.deniedLlmHosts }}))"
+      message: "GCP token/metadata endpoint on a host the group denies (governance.deniedLlmHosts)"
       reason: Forbidden
 ---
-# aigw-mcp-servers — conversion-listener only, allowed upstreams, central auth.
+# aigw-mcp-servers — conversion-listener only, central auth. Upstreams are the entity's choice.
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata: { name: aigw-mcp-servers, labels: { app.kubernetes.io/part-of: cagip-aigw-platform } }
@@ -179,16 +177,9 @@ spec:
     # Map-style access: has(apiSpec.conversion__dash__listener) does not resolve on this CRD.
     - name: cl
       expression: "'conversion-listener' in object.spec.apiSpec ? [object.spec.apiSpec['conversion-listener']] : []"
-    - name: hosts
-      expression: "{{ include "cagip.cel" $g.mcpHosts }}"
   validations:
     - expression: "object.spec.apiSpec.type == 'conversion-listener'"
       message: "entity MCP servers are conversion-listener (REST API → MCP tools); proxying an MCP server needs the platform"
-      reason: Forbidden
-    - expression: >-
-        variables.cl.all(s, url(s.config.url).getHostname() in variables.hosts &&
-          (!has(s.tools) || s.tools.all(t, !has(t.host) || t.host in variables.hosts)))
-      message: "MCP upstream host not allowed (governance.mcpHosts)"
       reason: Forbidden
     - expression: >-
         variables.cl.all(s, has(s.access) && has(s.access.consumer) && has(s.access.consumer.authStrategies) &&
@@ -196,8 +187,8 @@ spec:
       message: "every MCP server lists the central auth strategy {{ .Values.auth.name }}"
       reason: Forbidden
 ---
-# aigw-token-cap — usage plans: shared counters (Redis), a total budget, every token limit under
-# the cluster's cap.
+# aigw-token-cap — usage plans count correctly: shared counters (Redis) and a total budget.
+# The amounts are the entity's.
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata: { name: aigw-token-cap, labels: { app.kubernetes.io/part-of: cagip-aigw-platform } }
@@ -222,12 +213,6 @@ spec:
       reason: Forbidden
     - expression: "variables.policies.exists(p, !('match' in p) || size(p.match) == 0)"
       message: "the usage plan needs one policy with no match: the entity's total budget"
-      reason: Forbidden
-    - expression: >-
-        variables.policies.all(p, !('limits' in p) || p.limits.all(l,
-          ('tokens_count_strategy' in l && l.tokens_count_strategy == 'cost') ||
-          double(l.limit) * 3600.0 / double(l.window_size) <= {{ $g.tokenCapPerHour | float64 }}))
-      message: "a token limit is above the cap of {{ $g.tokenCapPerHour }} tokens/hour (governance.tokenCapPerHour)"
       reason: Forbidden
 {{- range list "aigw-platform-objects" "aigw-policies" "aigw-models" "aigw-model-providers" "aigw-mcp-servers" "aigw-token-cap" }}
 ---

@@ -21,13 +21,3 @@ auth:
 observability:
   otel: { enabled: true, endpoint: "http://otel.lclv2.demo.internal:4318" }
   httpLog: { enabled: true, endpoint: "http://es.lclv2.demo.internal:9200/kong-ai/_doc" }
-
-governance:
-  providerTypes: [gemini, openai]
-  llmHosts:
-    - mock-vertex.lclv2.demo.internal                                   # Vertex AI through PSC (mock)
-    - ollama.aigw-backends.svc.cluster.local               # on-prem model
-  mcpHosts:
-    - agences-api.aigw-backends.svc.cluster.local
-  tokenCapPerHour: 200000
-  payloadLogging: false

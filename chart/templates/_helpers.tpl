@@ -41,3 +41,8 @@ spec:
 {{- define "cagip.cel" -}}
 [{{ range $i, $v := . }}{{ if $i }}, {{ end }}'{{ $v }}'{{ end }}]
 {{- end }}
+
+{{/* CEL: host h matches a denied entry (the entry itself or a subdomain of it). */}}
+{{- define "cagip.denied" -}}
+{{ include "cagip.cel" . }}.exists(d, h == d || h.endsWith('.' + d))
+{{- end }}
