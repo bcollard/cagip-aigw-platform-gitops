@@ -12,7 +12,7 @@ gateway:
   namespace: ai-gateway    # the gateway and every AI entity (KO on-prem: one namespace)
   name: aigw               # OnPremAIGateway; the DataPlane is <name>-dp
   hostname: ""             # served on https://<hostname>
-  image: kong/kong-ai-gateway:2.2.0
+  image: kong/kong-ai-gateway-dev:aigw-master@sha256:a17200dbbcd21b255888fb6779d78ad01952cf5dc2e0534b8f9afcc0b127c947   # AI GW 2.3.0 dev build (2026-10-27), 2.3 not released yet
   replicas: 2
   workerProcesses: 2       # nginx workers per pod; one per node CPU does not fit 3Gi
   resources:
@@ -108,7 +108,7 @@ kong-operator:
   fullnameOverride: kong-operator
   image:
     repository: kong/nightly-kong-operator
-    tag: "20261021"
+    tag: "20261027"           # sha-3e9860c
     effectiveSemver: "2.4.0"   # the nightly tag is not semver
   env:
     enable_controller_aigatewaydataplane: true   # AI GW 2.x controllers are opt-in

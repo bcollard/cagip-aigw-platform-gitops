@@ -6,9 +6,9 @@ description: >-
   RBAC and the ValidatingAdmissionPolicies that govern the entity's AI configuration.
 type: application
 version: 0.1.0
-appVersion: "2.2.0"   # Kong AI Gateway
+appVersion: "2.3.0"   # Kong AI Gateway (dev build)
 # Subchart charts/kong-operator-1.5.0-rapid.2.0.tgz: Kong Operator chart packaged from
-# Kong/kong-operator@d64fca2, the commit of the nightly image kong/nightly-kong-operator:20261021.
+# Kong/kong-operator@3e9860c, the commit of the nightly image kong/nightly-kong-operator:20261027.
 # Vendored, not declared as a dependency: the published 1.5.0-rapid.2.0 chart carries older AI
 # CRDs. Once a release ships these CRDs, declare it here instead:
 #   dependencies:
