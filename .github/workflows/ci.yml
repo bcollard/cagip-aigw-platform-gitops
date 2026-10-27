@@ -1,0 +1,22 @@
+name: CI
+
+# Baseline checks on pull requests, so the gentinel bot PR clean-up can merge
+# dependency updates once they pass. Also runs on main: the clean-up ignores
+# checks that already fail on the default branch.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  helm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+      - run: helm template chart > /dev/null
